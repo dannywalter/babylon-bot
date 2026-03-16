@@ -15,9 +15,10 @@
  *   BABYLON_USER_ID       – did:privy:... identifier
  *
  * Optional .env vars:
- *   OPENAGI_FLIP_TO_SHORT_ABOVE   default 1600
- *   OPENAGI_FLIP_TO_LONG_BELOW    default 400
+ *   OPENAGI_FLIP_TO_SHORT_ABOVE   default 1750
+ *   OPENAGI_FLIP_TO_LONG_BELOW    default 200
  *   POLL_INTERVAL_MS              default 30000
+ *   DISCORD_WEBHOOK_URL           Discord webhook for flip notifications
  */
 
 require('dotenv').config();
@@ -28,13 +29,29 @@ const BASE_REST       = 'https://play.babylon.market';
 const BASE_MCP        = 'https://play.babylon.market/mcp';
 const TICKER          = 'OPENAGI';
 
-const FLIP_TO_SHORT_ABOVE = parseFloat(process.env.OPENAGI_FLIP_TO_SHORT_ABOVE ?? '1600');
-const FLIP_TO_LONG_BELOW  = parseFloat(process.env.OPENAGI_FLIP_TO_LONG_BELOW  ?? '400');
+const FLIP_TO_SHORT_ABOVE   = parseFloat(process.env.OPENAGI_FLIP_TO_SHORT_ABOVE ?? '1750');
+const FLIP_TO_LONG_BELOW    = parseFloat(process.env.OPENAGI_FLIP_TO_LONG_BELOW  ?? '200');
+const DISCORD_WEBHOOK_URL   = process.env.DISCORD_WEBHOOK_URL;
 const POLL_MS             = parseInt(process.env.POLL_INTERVAL_MS ?? '30000', 10);
 
 const args    = process.argv.slice(2);
 const WATCH   = args.includes('--watch');
 const DRY_RUN = args.includes('--dry-run') || process.env.DRY_RUN === 'true';
+
+// ── Discord notification ─────────────────────────────────────────────────────
+
+async function notifyDiscord(message) {
+  if (!DISCORD_WEBHOOK_URL) return;
+  try {
+    await fetch(DISCORD_WEBHOOK_URL, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ content: message }),
+    });
+  } catch (e) {
+    console.warn('Discord notification failed:', e.message);
+  }
+}
 
 // ── REST helpers ──────────────────────────────────────────────────────────────
 
@@ -158,19 +175,23 @@ async function check() {
 
   // ── Flip LONG → SHORT ─────────────────────────────────────────────────────
   if (price > FLIP_TO_SHORT_ABOVE && side === 'long') {
-    console.log(`  *** PRICE $${price} > $${FLIP_TO_SHORT_ABOVE}: flipping LONG → SHORT ***`);
+    const msg = `🔴 OPENAGI FLIP: LONG → SHORT\nPrice $${price.toFixed(2)} crossed above $${FLIP_TO_SHORT_ABOVE}\nuPnL at close: ${pnl} (${pnlPct})\nSize: $${position.size.toLocaleString()}`;
+    console.log(`  *** ${msg.replaceAll('\n', ' | ')} ***`);
     const size = position.size;
     await closePosition(position.id);
     await openPosition('short', size);
+    await notifyDiscord(msg);
     return;
   }
 
   // ── Flip SHORT → LONG ─────────────────────────────────────────────────────
   if (price < FLIP_TO_LONG_BELOW && side === 'short') {
-    console.log(`  *** PRICE $${price} < $${FLIP_TO_LONG_BELOW}: flipping SHORT → LONG ***`);
+    const msg = `🟢 OPENAGI FLIP: SHORT → LONG\nPrice $${price.toFixed(2)} dropped below $${FLIP_TO_LONG_BELOW}\nuPnL at close: ${pnl} (${pnlPct})\nSize: $${position.size.toLocaleString()}`;
+    console.log(`  *** ${msg.replaceAll('\n', ' | ')} ***`);
     const size = position.size;
     await closePosition(position.id);
     await openPosition('long', size);
+    await notifyDiscord(msg);
     return;
   }
 
