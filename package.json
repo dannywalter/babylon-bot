@@ -1,0 +1,25 @@
+{
+  "name": "babylon-bot",
+  "version": "1.0.0",
+  "description": "Guarded Babylon autonomous trading bot scaffold",
+  "main": "index.js",
+  "scripts": {
+    "test": "node test.js",
+    "start": "node babylon-trader.js",
+    "agent": "node agent.js",
+    "openai:mcp": "node openai-mcp-chat.mjs",
+    "list:tools": "node list-tools.js",
+    "flip:openagi": "node openagi-flip.js",
+    "flip:openagi:watch": "node openagi-flip.js --watch",
+    "flip:openagi:dry": "node openagi-flip.js --dry-run --watch"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "type": "commonjs",
+  "dependencies": {
+    "@a2a-js/sdk": "^0.3.12",
+    "dotenv": "^17.3.1",
+    "openai": "^4.100.0"
+  }
+}
