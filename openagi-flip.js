@@ -1,9 +1,9 @@
 /**
- * OPENAGI Position Flipper
+ * Multi-ticker Position Flipper
  *
- * Polls OPENAGI price and flips direction when thresholds are crossed:
- *   - If holding LONG  and price rises above FLIP_TO_SHORT_ABOVE  → close LONG,  open 1x SHORT
- *   - If holding SHORT and price falls below FLIP_TO_LONG_BELOW   → close SHORT, open 1x LONG
+ * Polls perp prices and flips position direction when thresholds are crossed:
+ *   - If holding LONG  and price rises above {TICKER}_FLIP_TO_SHORT_ABOVE  → close LONG,  open 1x SHORT
+ *   - If holding SHORT and price falls below {TICKER}_FLIP_TO_LONG_BELOW   → close SHORT, open 1x LONG
  *
  * Usage:
  *   node openagi-flip.js            # one-shot check
@@ -15,24 +15,31 @@
  *   BABYLON_USER_ID       – did:privy:... identifier
  *
  * Optional .env vars:
- *   OPENAGI_FLIP_TO_SHORT_ABOVE   default 1750
- *   OPENAGI_FLIP_TO_LONG_BELOW    default 200
- *   POLL_INTERVAL_MS              default 30000
- *   DISCORD_WEBHOOK_URL           Discord webhook for flip notifications
+ *   TICKERS                         comma-separated list, default "OPENAGI"
+ *   {TICKER}_FLIP_TO_SHORT_ABOVE    e.g. OPENAGI_FLIP_TO_SHORT_ABOVE=1750
+ *   {TICKER}_FLIP_TO_LONG_BELOW     e.g. OPENAGI_FLIP_TO_LONG_BELOW=200
+ *   POLL_INTERVAL_MS                default 30000
+ *   DISCORD_WEBHOOK_URL             Discord webhook for flip notifications
  */
 
 require('dotenv').config();
 
-const API_KEY         = process.env.BABYLON_API_KEY;
-const USER_ID         = process.env.BABYLON_USER_ID || 'did:privy:cmi9b6ko8011djv0czb0ozbvm';
-const BASE_REST       = 'https://play.babylon.market';
-const BASE_MCP        = 'https://play.babylon.market/mcp';
-const TICKER          = 'OPENAGI';
-
-const FLIP_TO_SHORT_ABOVE   = parseFloat(process.env.OPENAGI_FLIP_TO_SHORT_ABOVE ?? '1750');
-const FLIP_TO_LONG_BELOW    = parseFloat(process.env.OPENAGI_FLIP_TO_LONG_BELOW  ?? '200');
-const DISCORD_WEBHOOK_URL   = process.env.DISCORD_WEBHOOK_URL;
+const API_KEY             = process.env.BABYLON_API_KEY;
+const USER_ID             = process.env.BABYLON_USER_ID || 'did:privy:cmi9b6ko8011djv0czb0ozbvm';
+const BASE_REST           = 'https://play.babylon.market';
+const BASE_MCP            = 'https://play.babylon.market/mcp';
+const DISCORD_WEBHOOK_URL = process.env.DISCORD_WEBHOOK_URL;
 const POLL_MS             = parseInt(process.env.POLL_INTERVAL_MS ?? '30000', 10);
+
+// Parse ticker list — supports TICKERS env var or falls back to legacy OPENAGI defaults
+const TICKERS = (process.env.TICKERS ?? 'OPENAGI').split(',').map(t => t.trim().toUpperCase());
+
+function getThresholds(ticker) {
+  return {
+    flipToShortAbove: parseFloat(process.env[`${ticker}_FLIP_TO_SHORT_ABOVE`] ?? (ticker === 'OPENAGI' ? '1750' : 'Infinity')),
+    flipToLongBelow:  parseFloat(process.env[`${ticker}_FLIP_TO_LONG_BELOW`]  ?? (ticker === 'OPENAGI' ? '200'  : '-Infinity')),
+  };
+}
 
 const args    = process.argv.slice(2);
 const WATCH   = args.includes('--watch');
@@ -103,17 +110,17 @@ async function mcpCall(toolName, toolArgs = {}) {
 
 // ── Domain logic ──────────────────────────────────────────────────────────────
 
-async function getOpenAGIPrice() {
+async function getPrice(ticker) {
   const data = await restGet('/api/markets/perps');
-  const market = data.markets?.find(m => m.ticker === TICKER);
-  if (!market) throw new Error(`${TICKER} market not found in /api/markets/perps`);
+  const market = data.markets?.find(m => m.ticker === ticker);
+  if (!market) throw new Error(`${ticker} market not found in /api/markets/perps`);
   return market.markPrice ?? market.currentPrice;
 }
 
-async function getOpenAGIPosition() {
+async function getPosition(ticker) {
   const data = await restGet(`/api/markets/positions/${encodeURIComponent(USER_ID)}`);
   const positions = data?.perpetuals?.positions ?? [];
-  return positions.find(p => p.ticker === TICKER) ?? null;
+  return positions.find(p => p.ticker === ticker) ?? null;
 }
 
 async function closePosition(positionId) {
@@ -133,14 +140,14 @@ async function closePosition(positionId) {
   }
 }
 
-async function openPosition(side, size) {
-  console.log(`  → Opening 1x ${side.toUpperCase()} ${TICKER} size=${size}…`);
+async function openPosition(ticker, side, size) {
+  console.log(`  → Opening 1x ${side.toUpperCase()} ${ticker} size=${size}…`);
   if (DRY_RUN) { console.log('  [DRY RUN] skipping open'); return; }
 
   // Try REST first, fall back to MCP
   try {
     const result = await restPost('/api/markets/perps/open', {
-      ticker: TICKER,
+      ticker,
       side: side.toLowerCase(),
       amount: size,
       leverage: 1,
@@ -150,7 +157,7 @@ async function openPosition(side, size) {
   } catch (restErr) {
     console.warn(`  REST open failed (${restErr.message}), trying MCP…`);
     const result = await mcpCall('open_position', {
-      ticker: TICKER,
+      ticker,
       side: side.toUpperCase(),
       amount: size,
       leverage: 1,
@@ -160,37 +167,38 @@ async function openPosition(side, size) {
   }
 }
 
-// ── Main check ────────────────────────────────────────────────────────────────
+// ── Per-ticker check ──────────────────────────────────────────────────────────
 
-async function check() {
+async function checkTicker(ticker) {
+  const { flipToShortAbove, flipToLongBelow } = getThresholds(ticker);
   const now = new Date().toISOString();
-  const [price, position] = await Promise.all([getOpenAGIPrice(), getOpenAGIPosition()]);
+  const [price, position] = await Promise.all([getPrice(ticker), getPosition(ticker)]);
 
-  const side = position?.side ?? 'none';
+  const side   = position?.side ?? 'none';
   const pnlPct = position ? `${position.unrealizedPnLPercent.toFixed(2)}%` : 'n/a';
   const pnl    = position ? `$${position.unrealizedPnL.toFixed(2)}` : 'n/a';
 
-  console.log(`[${now}] ${TICKER} price=$${price.toFixed(2)}  position=${side.toUpperCase()}  uPnL=${pnl} (${pnlPct})`);
-  console.log(`  Thresholds: flip-to-SHORT above $${FLIP_TO_SHORT_ABOVE}  |  flip-to-LONG below $${FLIP_TO_LONG_BELOW}`);
+  console.log(`[${now}] ${ticker} price=$${price.toFixed(2)}  position=${side.toUpperCase()}  uPnL=${pnl} (${pnlPct})`);
+  console.log(`  Thresholds: flip-to-SHORT above $${flipToShortAbove}  |  flip-to-LONG below $${flipToLongBelow}`);
 
   // ── Flip LONG → SHORT ─────────────────────────────────────────────────────
-  if (price > FLIP_TO_SHORT_ABOVE && side === 'long') {
-    const msg = `🔴 OPENAGI FLIP: LONG → SHORT\nPrice $${price.toFixed(2)} crossed above $${FLIP_TO_SHORT_ABOVE}\nuPnL at close: ${pnl} (${pnlPct})\nSize: $${position.size.toLocaleString()}`;
+  if (price > flipToShortAbove && side === 'long') {
+    const msg = `🔴 ${ticker} FLIP: LONG → SHORT\nPrice $${price.toFixed(2)} crossed above $${flipToShortAbove}\nuPnL at close: ${pnl} (${pnlPct})\nSize: $${position.size.toLocaleString()}`;
     console.log(`  *** ${msg.replaceAll('\n', ' | ')} ***`);
     const size = position.size;
     await closePosition(position.id);
-    await openPosition('short', size);
+    await openPosition(ticker, 'short', size);
     await notifyDiscord(msg);
     return;
   }
 
   // ── Flip SHORT → LONG ─────────────────────────────────────────────────────
-  if (price < FLIP_TO_LONG_BELOW && side === 'short') {
-    const msg = `🟢 OPENAGI FLIP: SHORT → LONG\nPrice $${price.toFixed(2)} dropped below $${FLIP_TO_LONG_BELOW}\nuPnL at close: ${pnl} (${pnlPct})\nSize: $${position.size.toLocaleString()}`;
+  if (price < flipToLongBelow && side === 'short') {
+    const msg = `🟢 ${ticker} FLIP: SHORT → LONG\nPrice $${price.toFixed(2)} dropped below $${flipToLongBelow}\nuPnL at close: ${pnl} (${pnlPct})\nSize: $${position.size.toLocaleString()}`;
     console.log(`  *** ${msg.replaceAll('\n', ' | ')} ***`);
     const size = position.size;
     await closePosition(position.id);
-    await openPosition('long', size);
+    await openPosition(ticker, 'long', size);
     await notifyDiscord(msg);
     return;
   }
@@ -207,19 +215,24 @@ async function main() {
   }
 
   if (DRY_RUN) console.log('[DRY RUN MODE — no trades will execute]\n');
+  console.log(`Monitoring tickers: ${TICKERS.join(', ')}\n`);
 
-  await check();
-
-  if (WATCH) {
-    console.log(`\nWatching every ${POLL_MS / 1000}s (Ctrl+C to stop)…\n`);
-    setInterval(async () => {
-      try { await check(); } catch (e) {
-        console.error('[ERROR]', e.message);
+  async function checkAll() {
+    for (const ticker of TICKERS) {
+      try { await checkTicker(ticker); } catch (e) {
+        console.error(`[ERROR] ${ticker}:`, e.message);
         if (e.message.includes('401') || e.message.includes('403')) {
           console.error('  → API key rejected. Check BABYLON_API_KEY in .env.');
         }
       }
-    }, POLL_MS);
+    }
+  }
+
+  await checkAll();
+
+  if (WATCH) {
+    console.log(`\nWatching every ${POLL_MS / 1000}s (Ctrl+C to stop)…\n`);
+    setInterval(checkAll, POLL_MS);
   }
 }
 

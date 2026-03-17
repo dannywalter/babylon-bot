@@ -25,8 +25,11 @@ jobs:
         env:
           BABYLON_API_KEY: ${{ secrets.BABYLON_API_KEY }}
           BABYLON_USER_ID: ${{ secrets.BABYLON_USER_ID }}
+          TICKERS: ${{ vars.TICKERS || 'OPENAGI,TSLAI' }}
           OPENAGI_FLIP_TO_SHORT_ABOVE: ${{ vars.OPENAGI_FLIP_TO_SHORT_ABOVE || '1750' }}
           OPENAGI_FLIP_TO_LONG_BELOW: ${{ vars.OPENAGI_FLIP_TO_LONG_BELOW || '200' }}
+          TSLAI_FLIP_TO_SHORT_ABOVE: ${{ vars.TSLAI_FLIP_TO_SHORT_ABOVE || '970' }}
+          TSLAI_FLIP_TO_LONG_BELOW: ${{ vars.TSLAI_FLIP_TO_LONG_BELOW || '120' }}
           DRY_RUN: ${{ vars.DRY_RUN || 'false' }}
           DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
         run: node openagi-flip.js
