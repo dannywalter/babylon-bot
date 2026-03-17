@@ -48,13 +48,22 @@ const DRY_RUN = args.includes('--dry-run') || process.env.DRY_RUN === 'true';
 // ── Discord notification ─────────────────────────────────────────────────────
 
 async function notifyDiscord(message) {
-  if (!DISCORD_WEBHOOK_URL) return;
+  if (!DISCORD_WEBHOOK_URL) {
+    console.warn('Discord notification skipped: DISCORD_WEBHOOK_URL not set');
+    return;
+  }
   try {
-    await fetch(DISCORD_WEBHOOK_URL, {
+    const r = await fetch(DISCORD_WEBHOOK_URL, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ content: message }),
     });
+    if (!r.ok) {
+      const body = await r.text();
+      console.warn(`Discord notification failed: HTTP ${r.status} — ${body}`);
+    } else {
+      console.log('  Discord notification sent.');
+    }
   } catch (e) {
     console.warn('Discord notification failed:', e.message);
   }
