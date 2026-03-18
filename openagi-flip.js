@@ -20,6 +20,9 @@
  *   {TICKER}_FLIP_TO_LONG_BELOW     e.g. OPENAGI_FLIP_TO_LONG_BELOW=200
  *   POLL_INTERVAL_MS                default 30000
  *   DISCORD_WEBHOOK_URL             Discord webhook for flip notifications
+ *   DIRECTOR_AGENT_ID               YOLObot agent ID — enables mirror trades on its separate $1M cap
+ *   DIRECTOR_TRADE_SIZE             Fixed dollar size for YOLObot trades (e.g. 900000)
+ *   DRY_RUN                         set to true to simulate without trading
  */
 
 require('dotenv').config();
@@ -30,6 +33,7 @@ const BASE_REST           = 'https://play.babylon.market';
 const BASE_MCP            = 'https://play.babylon.market/mcp';
 const DISCORD_WEBHOOK_URL = process.env.DISCORD_WEBHOOK_URL;
 const POLL_MS             = parseInt(process.env.POLL_INTERVAL_MS ?? '30000', 10);
+let   a2aMsgId            = 0;
 
 // Parse ticker list — supports TICKERS env var or falls back to legacy OPENAGI defaults
 const TICKERS = (process.env.TICKERS ?? 'OPENAGI').split(',').map(t => t.trim().toUpperCase());
@@ -44,6 +48,55 @@ function getThresholds(ticker) {
 const args    = process.argv.slice(2);
 const WATCH   = args.includes('--watch');
 const DRY_RUN = args.includes('--dry-run') || process.env.DRY_RUN === 'true';
+
+// ── Director: execute trades directly on YOLObot's A2A endpoint ───────────────
+// Calls markets.open/close_position on YOLObot's own A2A server so trades
+// execute against YOLObot's separately-capped balance, not our main account.
+// Set DIRECTOR_AGENT_ID=292539064819646464 in .env / GitHub Actions secrets.
+
+const DIRECTOR_AGENT_ID  = process.env.DIRECTOR_AGENT_ID;
+const DIRECTOR_TRADE_SIZE = parseInt(process.env.DIRECTOR_TRADE_SIZE ?? '0', 10);
+
+async function yoloA2a(operation, params = {}) {
+  const id = ++a2aMsgId;
+  const r = await fetch(`https://play.babylon.market/api/agents/${DIRECTOR_AGENT_ID}/a2a`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', 'X-Babylon-Api-Key': API_KEY },
+    body: JSON.stringify({
+      jsonrpc: '2.0', method: 'message/send',
+      params: { message: { messageId: `dir-${id}`, role: 'user', parts: [{ kind: 'data', data: { operation, params } }] } },
+      id,
+    }),
+  });
+  const json = await r.json();
+  if (json?.result?.status?.state === 'failed') {
+    const msg = json?.result?.status?.message?.parts?.[0]?.text ?? JSON.stringify(json);
+    throw new Error(`YoloA2A failed: ${msg}`);
+  }
+  return json?.result?.artifacts?.[0]?.parts?.[0]?.data ?? json?.result;
+}
+
+async function directAgent(side, ticker, mainPositionId) {
+  if (!DIRECTOR_AGENT_ID || !DIRECTOR_TRADE_SIZE) return;
+  if (DRY_RUN) { console.log(`  [YOLObot] [DRY RUN] would flip ${side.toUpperCase()} ${ticker} size=$${DIRECTOR_TRADE_SIZE}`); return; }
+
+  try {
+    // Close existing position via REST positions endpoint (more reliable than A2A portfolio query)
+    const posData = await restGet(`/api/markets/positions/${encodeURIComponent('did:privy:cmmvn0ybe00ze0cl2mpwj1lfw')}`);
+    const existing = (posData?.perpetuals?.positions ?? []).find(p => p.ticker === ticker);
+    if (existing) {
+      console.log(`  [YOLObot] Closing existing ${existing.side.toUpperCase()} ${ticker} pos=${existing.id}…`);
+      await yoloA2a('markets.close_position', { positionId: existing.id });
+    }
+
+    // Open new position with configured size
+    console.log(`  [YOLObot] Opening 1x ${side.toUpperCase()} ${ticker} size=$${DIRECTOR_TRADE_SIZE}…`);
+    const result = await yoloA2a('markets.open_position', { ticker, side, amount: DIRECTOR_TRADE_SIZE, leverage: 1 });
+    console.log(`  [YOLObot] Done:`, JSON.stringify(result));
+  } catch (e) {
+    console.warn(`  [YOLObot] Director trade failed: ${e.message}`);
+  }
+}
 
 // ── Discord notification ─────────────────────────────────────────────────────
 
@@ -197,6 +250,7 @@ async function checkTicker(ticker) {
     const size = position.size;
     await closePosition(position.id);
     await openPosition(ticker, 'short', size);
+    await directAgent('short', ticker);
     await notifyDiscord(msg);
     return;
   }
@@ -208,6 +262,7 @@ async function checkTicker(ticker) {
     const size = position.size;
     await closePosition(position.id);
     await openPosition(ticker, 'long', size);
+    await directAgent('long', ticker);
     await notifyDiscord(msg);
     return;
   }
