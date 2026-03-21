@@ -65,12 +65,25 @@ const DIRECTOR_TRADE_SIZE = parseInt(process.env.DIRECTOR_TRADE_SIZE ?? '0', 10)
 
 async function yoloA2a(operation, params = {}) {
   const id = ++a2aMsgId;
+
+  // Build a plain-text instruction — ElizaOS agents dispatch to
+  // babylon_open_position / babylon_close_position actions via LLM,
+  // so text/plain is more reliable than a raw data message.
+  let text;
+  if (operation === 'markets.open_position') {
+    text = `Open a 1x ${params.side.toUpperCase()} position on ${params.ticker} with size $${params.amount}`;
+  } else if (operation === 'markets.close_position') {
+    text = `Close position ${params.positionId}`;
+  } else {
+    text = `${operation} ${JSON.stringify(params)}`;
+  }
+
   const r = await fetch(`https://babylon.market/api/agents/${DIRECTOR_AGENT_ID}/a2a`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', 'X-Babylon-Api-Key': API_KEY },
     body: JSON.stringify({
       jsonrpc: '2.0', method: 'message/send',
-      params: { message: { messageId: `dir-${id}`, role: 'user', parts: [{ kind: 'data', data: { operation, params } }] } },
+      params: { message: { messageId: `dir-${id}`, role: 'user', parts: [{ kind: 'text', text }] } },
       id,
     }),
   });
