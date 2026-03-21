@@ -65,7 +65,7 @@ const DIRECTOR_TRADE_SIZE = parseInt(process.env.DIRECTOR_TRADE_SIZE ?? '0', 10)
 
 async function yoloA2a(operation, params = {}) {
   const id = ++a2aMsgId;
-  const r = await fetch(`https://play.babylon.market/api/agents/${DIRECTOR_AGENT_ID}/a2a`, {
+  const r = await fetch(`https://babylon.market/api/agents/${DIRECTOR_AGENT_ID}/a2a`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', 'X-Babylon-Api-Key': API_KEY },
     body: JSON.stringify({
@@ -88,7 +88,7 @@ async function directAgent(side, ticker, mainPositionId) {
 
   try {
     // Close existing position via REST positions endpoint (more reliable than A2A portfolio query)
-    const posData = await restGet(`/api/markets/positions/${encodeURIComponent('did:privy:cmmvn0ybe00ze0cl2mpwj1lfw')}`);
+    const posData = await restGet(`/api/markets/positions/${encodeURIComponent(DIRECTOR_AGENT_ID)}`);
     const existing = (posData?.perpetuals?.positions ?? []).find(p => p.ticker === ticker);
     if (existing) {
       console.log(`  [YOLObot] Closing existing ${existing.side.toUpperCase()} ${ticker} pos=${existing.id}…`);
