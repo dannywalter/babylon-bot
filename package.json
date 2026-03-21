@@ -13,7 +13,10 @@
     "list:tools": "node list-tools.js",
     "flip:openagi": "node openagi-flip.js",
     "flip:openagi:watch": "node openagi-flip.js --watch",
-    "flip:openagi:dry": "node openagi-flip.js --dry-run --watch"
+    "flip:openagi:dry": "node openagi-flip.js --dry-run --watch",
+    "flip:spcx": "TICKERS=SPCX node openagi-flip.js --watch",
+    "flip:spcx:dry": "TICKERS=SPCX node openagi-flip.js --dry-run --watch",
+    "a2a:send": "node send-a2a.js"
   },
   "keywords": [],
   "author": "",

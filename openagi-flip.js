@@ -35,13 +35,19 @@ const DISCORD_WEBHOOK_URL = process.env.DISCORD_WEBHOOK_URL;
 const POLL_MS             = parseInt(process.env.POLL_INTERVAL_MS ?? '30000', 10);
 let   a2aMsgId            = 0;
 
-// Parse ticker list — supports TICKERS env var or falls back to legacy OPENAGI defaults
-const TICKERS = (process.env.TICKERS ?? 'OPENAGI').split(',').map(t => t.trim().toUpperCase());
+// Parse ticker list — supports TICKERS env var or falls back to all known tickers
+const TICKERS = (process.env.TICKERS ?? 'OPENAGI,SPCX').split(',').map(t => t.trim().toUpperCase());
+
+const TICKER_DEFAULTS = {
+  OPENAGI: { flipToShortAbove: 1750, flipToLongBelow: 200  },
+  SPCX:    { flipToShortAbove: 700,  flipToLongBelow: 100  },
+};
 
 function getThresholds(ticker) {
+  const defaults = TICKER_DEFAULTS[ticker] ?? { flipToShortAbove: Infinity, flipToLongBelow: -Infinity };
   return {
-    flipToShortAbove: parseFloat(process.env[`${ticker}_FLIP_TO_SHORT_ABOVE`] ?? (ticker === 'OPENAGI' ? '1750' : 'Infinity')),
-    flipToLongBelow:  parseFloat(process.env[`${ticker}_FLIP_TO_LONG_BELOW`]  ?? (ticker === 'OPENAGI' ? '200'  : '-Infinity')),
+    flipToShortAbove: parseFloat(process.env[`${ticker}_FLIP_TO_SHORT_ABOVE`] ?? defaults.flipToShortAbove),
+    flipToLongBelow:  parseFloat(process.env[`${ticker}_FLIP_TO_LONG_BELOW`]  ?? defaults.flipToLongBelow),
   };
 }
 
@@ -245,25 +251,37 @@ async function checkTicker(ticker) {
 
   // ── Flip LONG → SHORT ─────────────────────────────────────────────────────
   if (price > flipToShortAbove && side === 'long') {
-    const msg = `🔴 ${ticker} FLIP: LONG → SHORT\nPrice $${price.toFixed(2)} crossed above $${flipToShortAbove}\nuPnL at close: ${pnl} (${pnlPct})\nSize: $${position.size.toLocaleString()}`;
-    console.log(`  *** ${msg.replaceAll('\n', ' | ')} ***`);
+    const header = `🔴 ${ticker} FLIP: LONG → SHORT\nPrice $${price.toFixed(2)} crossed above $${flipToShortAbove}\nuPnL at close: ${pnl} (${pnlPct})\nSize: $${position.size.toLocaleString()}`;
+    console.log(`  *** ${header.replaceAll('\n', ' | ')} ***`);
     const size = position.size;
-    await closePosition(position.id);
-    await openPosition(ticker, 'short', size);
-    await directAgent('short', ticker);
-    await notifyDiscord(msg);
+    try {
+      await closePosition(position.id);
+      await openPosition(ticker, 'short', size);
+      await directAgent('short', ticker);
+      await notifyDiscord(header);
+    } catch (e) {
+      console.error(`  [FLIP ERROR] ${e.message}`);
+      await notifyDiscord(`❌ ${ticker} FLIP FAILED: LONG → SHORT\n${e.message}`);
+      throw e;
+    }
     return;
   }
 
   // ── Flip SHORT → LONG ─────────────────────────────────────────────────────
   if (price < flipToLongBelow && side === 'short') {
-    const msg = `🟢 ${ticker} FLIP: SHORT → LONG\nPrice $${price.toFixed(2)} dropped below $${flipToLongBelow}\nuPnL at close: ${pnl} (${pnlPct})\nSize: $${position.size.toLocaleString()}`;
-    console.log(`  *** ${msg.replaceAll('\n', ' | ')} ***`);
+    const header = `🟢 ${ticker} FLIP: SHORT → LONG\nPrice $${price.toFixed(2)} dropped below $${flipToLongBelow}\nuPnL at close: ${pnl} (${pnlPct})\nSize: $${position.size.toLocaleString()}`;
+    console.log(`  *** ${header.replaceAll('\n', ' | ')} ***`);
     const size = position.size;
-    await closePosition(position.id);
-    await openPosition(ticker, 'long', size);
-    await directAgent('long', ticker);
-    await notifyDiscord(msg);
+    try {
+      await closePosition(position.id);
+      await openPosition(ticker, 'long', size);
+      await directAgent('long', ticker);
+      await notifyDiscord(header);
+    } catch (e) {
+      console.error(`  [FLIP ERROR] ${e.message}`);
+      await notifyDiscord(`❌ ${ticker} FLIP FAILED: SHORT → LONG\n${e.message}`);
+      throw e;
+    }
     return;
   }
 
