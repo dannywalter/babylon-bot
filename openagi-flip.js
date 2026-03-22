@@ -66,24 +66,19 @@ const DIRECTOR_TRADE_SIZE = parseInt(process.env.DIRECTOR_TRADE_SIZE ?? '0', 10)
 async function yoloA2a(operation, params = {}) {
   const id = ++a2aMsgId;
 
-  // Build a plain-text instruction — ElizaOS agents dispatch to
-  // babylon_open_position / babylon_close_position actions via LLM,
-  // so text/plain is more reliable than a raw data message.
-  let text;
-  if (operation === 'markets.open_position') {
-    text = `Open a 1x ${params.side.toUpperCase()} position on ${params.ticker} with size $${params.amount}`;
-  } else if (operation === 'markets.close_position') {
-    text = `Close position ${params.positionId}`;
-  } else {
-    text = `${operation} ${JSON.stringify(params)}`;
-  }
-
+  // Babylon A2A agents use kind:data with a nested params object and contextId.
+  // kind:text is JSON.parsed server-side (not plain LLM dispatch).
   const r = await fetch(`https://babylon.market/api/agents/${DIRECTOR_AGENT_ID}/a2a`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', 'X-Babylon-Api-Key': API_KEY },
     body: JSON.stringify({
       jsonrpc: '2.0', method: 'message/send',
-      params: { message: { messageId: `dir-${id}`, role: 'user', parts: [{ kind: 'text', text }] } },
+      params: { message: {
+        messageId: `dir-${id}`,
+        role: 'user',
+        contextId: USER_ID,
+        parts: [{ kind: 'data', data: { operation, params } }],
+      }},
       id,
     }),
   });
@@ -201,51 +196,31 @@ async function getPrice(ticker) {
 async function getPosition(ticker) {
   const data = await restGet(`/api/markets/positions/${encodeURIComponent(USER_ID)}`);
   const positions = data?.perpetuals?.positions ?? [];
-  return positions.find(p => p.ticker === ticker) ?? null;
+  // Exclude agent-owned positions (isAgentPosition:true) so we only act on our own positions.
+  return positions.find(p => p.ticker === ticker && !p.isAgentPosition) ?? null;
 }
 
 async function closePosition(positionId) {
   console.log(`  → Closing position ${positionId}…`);
   if (DRY_RUN) { console.log('  [DRY RUN] skipping close'); return; }
 
-  // Try REST first, fall back to MCP
-  try {
-    const result = await restPost(`/api/markets/perps/position/${positionId}/close`, {});
-    console.log('  Closed via REST:', JSON.stringify(result));
-    return result;
-  } catch (restErr) {
-    console.warn(`  REST close failed (${restErr.message}), trying MCP…`);
-    const result = await mcpCall('close_position', { positionId });
-    console.log('  Closed via MCP:', JSON.stringify(result));
-    return result;
-  }
+  const result = await mcpCall('close_position', { positionId });
+  console.log('  Closed via MCP:', JSON.stringify(result));
+  return result;
 }
 
 async function openPosition(ticker, side, size) {
   console.log(`  → Opening 1x ${side.toUpperCase()} ${ticker} size=${size}…`);
   if (DRY_RUN) { console.log('  [DRY RUN] skipping open'); return; }
 
-  // Try REST first, fall back to MCP
-  try {
-    const result = await restPost('/api/markets/perps/open', {
-      ticker,
-      side: side.toLowerCase(),
-      amount: size,
-      leverage: 1,
-    });
-    console.log('  Opened via REST:', JSON.stringify(result));
-    return result;
-  } catch (restErr) {
-    console.warn(`  REST open failed (${restErr.message}), trying MCP…`);
-    const result = await mcpCall('open_position', {
-      ticker,
-      side: side.toUpperCase(),
-      amount: size,
-      leverage: 1,
-    });
-    console.log('  Opened via MCP:', JSON.stringify(result));
-    return result;
-  }
+  const result = await mcpCall('open_position', {
+    ticker,
+    side: side.toUpperCase(),
+    amount: size,
+    leverage: 1,
+  });
+  console.log('  Opened via MCP:', JSON.stringify(result));
+  return result;
 }
 
 // ── Per-ticker check ──────────────────────────────────────────────────────────

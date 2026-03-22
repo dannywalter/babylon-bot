@@ -58,6 +58,7 @@ async function sendMessage(text) {
       params:  {
         message: {
           messageId: `msg-${id}`,
+          contextId: process.env.BABYLON_USER_ID,
           role:      'user',
           parts:     [{ kind: 'text', text }],
         },
