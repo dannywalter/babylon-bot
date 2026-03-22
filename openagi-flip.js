@@ -40,7 +40,7 @@ const TICKERS = (process.env.TICKERS ?? 'OPENAGI,SPCX').split(',').map(t => t.tr
 
 const TICKER_DEFAULTS = {
   OPENAGI: { flipToShortAbove: 1750, flipToLongBelow: 200  },
-  SPCX:    { flipToShortAbove: 700,  flipToLongBelow: 100  },
+  SPCX:    { flipToShortAbove: 600,  flipToLongBelow: 100  },
 };
 
 function getThresholds(ticker) {
