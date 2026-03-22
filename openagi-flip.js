@@ -88,22 +88,26 @@ const DRY_RUN = args.includes('--dry-run') || process.env.DRY_RUN === 'true';
 const DIRECTOR_AGENT_ID  = process.env.DIRECTOR_AGENT_ID;
 const DIRECTOR_TRADE_SIZE = parseInt(process.env.DIRECTOR_TRADE_SIZE ?? '0', 10);
 
-async function yoloA2a(operation, params = {}) {
+// contextId: pass USER_ID to trade in the user's account, DIRECTOR_AGENT_ID to
+// trade in YOLObot's own agent account, or undefined to omit (YOLObot self-acts).
+async function yoloA2a(operation, params = {}, contextId = USER_ID) {
   const id = ++a2aMsgId;
 
   // Babylon A2A agents use kind:data with a nested params object and contextId.
   // kind:text is JSON.parsed server-side (not plain LLM dispatch).
+  const message = {
+    messageId: `dir-${id}`,
+    role: 'user',
+    parts: [{ kind: 'data', data: { operation, params } }],
+  };
+  if (contextId != null) message.contextId = contextId;
+
   const r = await fetch(`https://babylon.market/api/agents/${DIRECTOR_AGENT_ID}/a2a`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', 'X-Babylon-Api-Key': API_KEY },
     body: JSON.stringify({
       jsonrpc: '2.0', method: 'message/send',
-      params: { message: {
-        messageId: `dir-${id}`,
-        role: 'user',
-        contextId: USER_ID,
-        parts: [{ kind: 'data', data: { operation, params } }],
-      }},
+      params: { message },
       id,
     }),
   });
@@ -167,18 +171,39 @@ async function checkDirectorTicker(ticker) {
   console.log(`[${now}] [YOLObot] ${ticker} price=$${price.toFixed(2)}  position=${side.toUpperCase()}  uPnL=${pnl} (${pnlPct})`);
   console.log(`  Director thresholds: flip-to-SHORT above $${flipToShortAbove}  |  flip-to-LONG below $${flipToLongBelow}`);
 
+  // Attempt to close an existing director position. Agent-owned positions must
+  // be closed using DIRECTOR_AGENT_ID as contextId (YOLObot acts as itself).
+  // Falls back to USER_ID for positions we previously opened in user context.
+  async function tryClose(pos, label) {
+    if (!pos) return;
+    console.log(`  [YOLObot] Closing ${label} pos=${pos.id}…`);
+    // Try 1: agent's own contextId — works for YOLObot's autonomous positions
+    try {
+      await yoloA2a('markets.close_position', { positionId: pos.id }, DIRECTOR_AGENT_ID);
+      console.log(`  [YOLObot] Closed via agent context.`);
+      return;
+    } catch (e1) {
+      console.warn(`  [YOLObot] Close (agent ctx) failed: ${e1.message}`);
+    }
+    // Try 2: user contextId — works for positions we previously opened as the user
+    try {
+      await yoloA2a('markets.close_position', { positionId: pos.id }, USER_ID);
+      console.log(`  [YOLObot] Closed via user context.`);
+      return;
+    } catch (e2) {
+      console.warn(`  [YOLObot] Close (user ctx) also failed: ${e2.message} — proceeding to open anyway.`);
+    }
+  }
+
   // Flip YOLObot LONG → SHORT
   if (price > flipToShortAbove && side === 'long') {
     const header = `🔴 [YOLObot] ${ticker} FLIP: LONG → SHORT\nPrice $${price.toFixed(2)} crossed above $${flipToShortAbove}\nuPnL at signal: ${pnl} (${pnlPct})`;
     console.log(`  *** ${header.replaceAll('\n', ' | ')} ***`);
     try {
       if (!DRY_RUN) {
-        if (position) {
-          console.log(`  [YOLObot] Closing ${ticker} LONG pos=${position.id}…`);
-          await yoloA2a('markets.close_position', { positionId: position.id });
-        }
+        await tryClose(position, `${ticker} LONG`);
         console.log(`  [YOLObot] Opening 1x SHORT ${ticker} size=$${tradeSize}…`);
-        const result = await yoloA2a('markets.open_position', { ticker, side: 'short', amount: tradeSize, leverage: 1 });
+        const result = await yoloA2a('markets.open_position', { ticker, side: 'short', amount: tradeSize, leverage: 1 }, DIRECTOR_AGENT_ID);
         console.log(`  [YOLObot] Done:`, JSON.stringify(result));
       } else {
         console.log(`  [YOLObot] [DRY RUN] would close ${ticker} LONG and open SHORT size=$${tradeSize}`);
@@ -197,12 +222,9 @@ async function checkDirectorTicker(ticker) {
     console.log(`  *** ${header.replaceAll('\n', ' | ')} ***`);
     try {
       if (!DRY_RUN) {
-        if (position) {
-          console.log(`  [YOLObot] Closing ${ticker} SHORT pos=${position.id}…`);
-          await yoloA2a('markets.close_position', { positionId: position.id });
-        }
+        await tryClose(position, `${ticker} SHORT`);
         console.log(`  [YOLObot] Opening 1x LONG ${ticker} size=$${tradeSize}…`);
-        const result = await yoloA2a('markets.open_position', { ticker, side: 'long', amount: tradeSize, leverage: 1 });
+        const result = await yoloA2a('markets.open_position', { ticker, side: 'long', amount: tradeSize, leverage: 1 }, DIRECTOR_AGENT_ID);
         console.log(`  [YOLObot] Done:`, JSON.stringify(result));
       } else {
         console.log(`  [YOLObot] [DRY RUN] would close ${ticker} SHORT and open LONG size=$${tradeSize}`);
