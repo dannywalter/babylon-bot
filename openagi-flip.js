@@ -22,6 +22,10 @@
  *   DISCORD_WEBHOOK_URL             Discord webhook for flip notifications
  *   DIRECTOR_AGENT_ID               YOLObot agent ID — enables mirror trades on its separate $1M cap
  *   DIRECTOR_TRADE_SIZE             Fixed dollar size for YOLObot trades (e.g. 900000)
+ *   DIRECTOR_TICKERS                comma-separated tickers to manage on YOLObot ONLY (no user position needed)
+ *   {TICKER}_DIRECTOR_FLIP_TO_SHORT_ABOVE   e.g. AIPHB_DIRECTOR_FLIP_TO_SHORT_ABOVE=500
+ *   {TICKER}_DIRECTOR_FLIP_TO_LONG_BELOW    e.g. AIPHB_DIRECTOR_FLIP_TO_LONG_BELOW=130
+ *   {TICKER}_DIRECTOR_TRADE_SIZE            per-ticker override (falls back to DIRECTOR_TRADE_SIZE)
  *   DRY_RUN                         set to true to simulate without trading
  */
 
@@ -42,6 +46,27 @@ const TICKER_DEFAULTS = {
   OPENAGI: { flipToShortAbove: 1750, flipToLongBelow: 200  },
   SPCX:    { flipToShortAbove: 600,  flipToLongBelow: 100  },
 };
+
+// Director-only tickers: YOLObot positions managed independently of the user's own
+const DIRECTOR_TICKERS = process.env.DIRECTOR_TICKERS
+  ? process.env.DIRECTOR_TICKERS.split(',').map(t => t.trim().toUpperCase())
+  : [];
+
+const DIRECTOR_TICKER_DEFAULTS = {
+  AIPHB: { flipToShortAbove: Infinity, flipToLongBelow: 130 },
+};
+
+function getDirectorThresholds(ticker) {
+  const defaults = DIRECTOR_TICKER_DEFAULTS[ticker] ?? { flipToShortAbove: Infinity, flipToLongBelow: -Infinity };
+  return {
+    flipToShortAbove: parseFloat(process.env[`${ticker}_DIRECTOR_FLIP_TO_SHORT_ABOVE`] ?? defaults.flipToShortAbove),
+    flipToLongBelow:  parseFloat(process.env[`${ticker}_DIRECTOR_FLIP_TO_LONG_BELOW`]  ?? defaults.flipToLongBelow),
+  };
+}
+
+function getDirectorTradeSize(ticker) {
+  return parseInt(process.env[`${ticker}_DIRECTOR_TRADE_SIZE`] ?? DIRECTOR_TRADE_SIZE, 10);
+}
 
 function getThresholds(ticker) {
   const defaults = TICKER_DEFAULTS[ticker] ?? { flipToShortAbove: Infinity, flipToLongBelow: -Infinity };
@@ -110,6 +135,87 @@ async function directAgent(side, ticker, mainPositionId) {
   } catch (e) {
     console.warn(`  [YOLObot] Director trade failed: ${e.message}`);
   }
+}
+
+// ── Director-only ticker check ──────────────────────────────────────────────
+// Watches YOLObot's own position for a ticker and flips it when thresholds
+// are crossed — no user-side position required.
+
+async function checkDirectorTicker(ticker) {
+  if (!DIRECTOR_AGENT_ID) {
+    console.warn(`  [Director] DIRECTOR_AGENT_ID not set — skipping ${ticker}`);
+    return;
+  }
+
+  const { flipToShortAbove, flipToLongBelow } = getDirectorThresholds(ticker);
+  const tradeSize = getDirectorTradeSize(ticker);
+  if (!tradeSize) {
+    console.warn(`  [Director] No trade size for ${ticker} — set ${ticker}_DIRECTOR_TRADE_SIZE or DIRECTOR_TRADE_SIZE`);
+    return;
+  }
+
+  const now = new Date().toISOString();
+  const price = await getPrice(ticker);
+
+  // Get YOLObot's own position for this ticker
+  const posData = await restGet(`/api/markets/positions/${encodeURIComponent(DIRECTOR_AGENT_ID)}`);
+  const position = (posData?.perpetuals?.positions ?? []).find(p => p.ticker === ticker) ?? null;
+  const side = position?.side ?? 'none';
+  const pnl = position ? `$${position.unrealizedPnL?.toFixed(2)}` : 'n/a';
+  const pnlPct = position ? `${position.unrealizedPnLPercent?.toFixed(2)}%` : 'n/a';
+
+  console.log(`[${now}] [YOLObot] ${ticker} price=$${price.toFixed(2)}  position=${side.toUpperCase()}  uPnL=${pnl} (${pnlPct})`);
+  console.log(`  Director thresholds: flip-to-SHORT above $${flipToShortAbove}  |  flip-to-LONG below $${flipToLongBelow}`);
+
+  // Flip YOLObot LONG → SHORT
+  if (price > flipToShortAbove && side === 'long') {
+    const header = `🔴 [YOLObot] ${ticker} FLIP: LONG → SHORT\nPrice $${price.toFixed(2)} crossed above $${flipToShortAbove}\nuPnL at signal: ${pnl} (${pnlPct})`;
+    console.log(`  *** ${header.replaceAll('\n', ' | ')} ***`);
+    try {
+      if (!DRY_RUN) {
+        if (position) {
+          console.log(`  [YOLObot] Closing ${ticker} LONG pos=${position.id}…`);
+          await yoloA2a('markets.close_position', { positionId: position.id });
+        }
+        console.log(`  [YOLObot] Opening 1x SHORT ${ticker} size=$${tradeSize}…`);
+        const result = await yoloA2a('markets.open_position', { ticker, side: 'short', amount: tradeSize, leverage: 1 });
+        console.log(`  [YOLObot] Done:`, JSON.stringify(result));
+      } else {
+        console.log(`  [YOLObot] [DRY RUN] would close ${ticker} LONG and open SHORT size=$${tradeSize}`);
+      }
+      await notifyDiscord(header);
+    } catch (e) {
+      console.error(`  [YOLObot] FLIP ERROR: ${e.message}`);
+      await notifyDiscord(`❌ [YOLObot] ${ticker} FLIP FAILED: LONG → SHORT\n${e.message}`);
+    }
+    return;
+  }
+
+  // Flip YOLObot SHORT → LONG
+  if (price < flipToLongBelow && side === 'short') {
+    const header = `🟢 [YOLObot] ${ticker} FLIP: SHORT → LONG\nPrice $${price.toFixed(2)} dropped below $${flipToLongBelow}\nuPnL at signal: ${pnl} (${pnlPct})`;
+    console.log(`  *** ${header.replaceAll('\n', ' | ')} ***`);
+    try {
+      if (!DRY_RUN) {
+        if (position) {
+          console.log(`  [YOLObot] Closing ${ticker} SHORT pos=${position.id}…`);
+          await yoloA2a('markets.close_position', { positionId: position.id });
+        }
+        console.log(`  [YOLObot] Opening 1x LONG ${ticker} size=$${tradeSize}…`);
+        const result = await yoloA2a('markets.open_position', { ticker, side: 'long', amount: tradeSize, leverage: 1 });
+        console.log(`  [YOLObot] Done:`, JSON.stringify(result));
+      } else {
+        console.log(`  [YOLObot] [DRY RUN] would close ${ticker} SHORT and open LONG size=$${tradeSize}`);
+      }
+      await notifyDiscord(header);
+    } catch (e) {
+      console.error(`  [YOLObot] FLIP ERROR: ${e.message}`);
+      await notifyDiscord(`❌ [YOLObot] ${ticker} FLIP FAILED: SHORT → LONG\n${e.message}`);
+    }
+    return;
+  }
+
+  console.log('  No action needed.');
 }
 
 // ── Discord notification ─────────────────────────────────────────────────────
@@ -285,7 +391,9 @@ async function main() {
   }
 
   if (DRY_RUN) console.log('[DRY RUN MODE — no trades will execute]\n');
-  console.log(`Monitoring tickers: ${TICKERS.join(', ')}\n`);
+  if (TICKERS.length)         console.log(`Monitoring tickers: ${TICKERS.join(', ')}`);
+  if (DIRECTOR_TICKERS.length) console.log(`Director tickers:   ${DIRECTOR_TICKERS.join(', ')} (YOLObot-only)`);
+  console.log();
 
   async function checkAll() {
     for (const ticker of TICKERS) {
@@ -294,6 +402,11 @@ async function main() {
         if (e.message.includes('401') || e.message.includes('403')) {
           console.error('  → API key rejected. Check BABYLON_API_KEY in .env.');
         }
+      }
+    }
+    for (const ticker of DIRECTOR_TICKERS) {
+      try { await checkDirectorTicker(ticker); } catch (e) {
+        console.error(`[ERROR] [Director] ${ticker}:`, e.message);
       }
     }
   }
