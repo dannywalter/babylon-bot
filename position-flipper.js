@@ -172,10 +172,10 @@ async function checkFlip({ ticker, label, thresholds, getPos, closePos, openPos 
       if (!DRY_RUN) {
         await closePos(position);
         await openPos('short', position);
+        await notifyDiscord(header);
       } else {
         console.log(`  [${label}] [DRY RUN] would close ${ticker} LONG and open SHORT`);
       }
-      await notifyDiscord(header);
     } catch (e) {
       console.error(`  [FLIP ERROR] ${e.message}`);
       await notifyDiscord(buildAlert({
@@ -212,10 +212,10 @@ async function checkFlip({ ticker, label, thresholds, getPos, closePos, openPos 
       if (!DRY_RUN) {
         await closePos(position);
         await openPos('long', position);
+        await notifyDiscord(header);
       } else {
         console.log(`  [${label}] [DRY RUN] would close ${ticker} SHORT and open LONG`);
       }
-      await notifyDiscord(header);
     } catch (e) {
       console.error(`  [FLIP ERROR] ${e.message}`);
       await notifyDiscord(buildAlert({

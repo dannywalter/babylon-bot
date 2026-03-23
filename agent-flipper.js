@@ -121,10 +121,10 @@ async function checkAgentTicker(ticker) {
         await closeAgentPosition(position);
         const nextSize = position?.size ?? AGENT_TRADE_SIZE;
         await openAgentPosition(ticker, 'short', nextSize);
+        await notifyDiscord(alert);
       } else {
         console.log(`  [${AGENT_LABEL}] [DRY RUN] would close ${ticker} LONG and open SHORT`);
       }
-      await notifyDiscord(alert);
     } catch (e) {
       console.error(`  [FLIP ERROR] ${e.message}`);
       await notifyDiscord(buildAlert({
@@ -160,10 +160,10 @@ async function checkAgentTicker(ticker) {
         await closeAgentPosition(position);
         const nextSize = position?.size ?? AGENT_TRADE_SIZE;
         await openAgentPosition(ticker, 'long', nextSize);
+        await notifyDiscord(alert);
       } else {
         console.log(`  [${AGENT_LABEL}] [DRY RUN] would close ${ticker} SHORT and open LONG`);
       }
-      await notifyDiscord(alert);
     } catch (e) {
       console.error(`  [FLIP ERROR] ${e.message}`);
       await notifyDiscord(buildAlert({
