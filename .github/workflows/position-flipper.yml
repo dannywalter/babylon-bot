@@ -2,9 +2,20 @@ name: Position Flipper
 
 on:
   workflow_dispatch:
+    inputs:
+      run_mode:
+        description: "Which flip job to run"
+        required: true
+        default: "check-and-flip"
+        type: choice
+        options:
+          - check-and-flip
+          - agent-flip
+          - both
 
 jobs:
   check-and-flip:
+    if: ${{ github.event.inputs.run_mode == 'check-and-flip' || github.event.inputs.run_mode == 'both' }}
     runs-on: ubuntu-latest
     timeout-minutes: 2
     env:
@@ -68,6 +79,7 @@ jobs:
         run: node position-flipper.js
 
   agent-flip:
+    if: ${{ github.event.inputs.run_mode == 'agent-flip' || github.event.inputs.run_mode == 'both' }}
     runs-on: ubuntu-latest
     timeout-minutes: 2
     env:
