@@ -4,12 +4,13 @@ const BASE_URL = (process.env.BABYLON_BASE_URL || 'https://babylon.market').repl
 const API_KEY = process.env.BABYLON_API_KEY;
 const PRIVY_TOKEN = process.env.BABYLON_PRIVY_TOKEN;
 const ONBOARD_BEARER_TOKEN = process.env.BABYLON_ONBOARD_BEARER_TOKEN;
+const AGENT_HANDLE = String(process.env.AGENT_HANDLE || '').trim().replace(/^@/, '');
 const AGENT_NAME = process.env.AGENT_NAME || 'DOCTOR ASS';
 const AGENT_DESCRIPTION =
   process.env.AGENT_DESCRIPTION ||
   'A high-risk, high-reward YOLO trader who lives for the thrill of the trade. No risk, no reward, no problem.';
 const AGENT_ENDPOINT = process.env.AGENT_ENDPOINT || 'https://web-production-60c99.up.railway.app/';
-const AGENT_EXTERNAL_ID = process.env.AGENT_EXTERNAL_ID || `agent-${Date.now()}`;
+const AGENT_EXTERNAL_ID = process.env.AGENT_EXTERNAL_ID || (AGENT_HANDLE ? AGENT_HANDLE : `agent-${Date.now()}`);
 
 function safeParse(text) {
   try {
@@ -21,6 +22,13 @@ function safeParse(text) {
 
 function compact(value) {
   return String(value || '').trim();
+}
+
+function normalizeRawToken(value) {
+  const raw = compact(value);
+  if (!raw) return '';
+  if (raw === 'YOUR_FRESH_TOKEN') return '';
+  return raw.replace(/^Bearer\s+/i, '').trim();
 }
 
 async function postJson(path, body, auth) {
@@ -47,28 +55,32 @@ async function postJson(path, body, auth) {
 
 function resolveCandidateAuthHeaders() {
   const candidates = [];
-  if (compact(ONBOARD_BEARER_TOKEN)) {
+  const onboardToken = normalizeRawToken(ONBOARD_BEARER_TOKEN);
+  const apiKey = compact(API_KEY);
+  const privyToken = normalizeRawToken(PRIVY_TOKEN);
+
+  if (onboardToken) {
     candidates.push({
       label: 'Authorization Bearer (BABYLON_ONBOARD_BEARER_TOKEN)',
-      headers: { Authorization: `Bearer ${ONBOARD_BEARER_TOKEN}` },
+      headers: { Authorization: `Bearer ${onboardToken}` },
     });
   }
 
-  if (compact(API_KEY)) {
+  if (apiKey) {
     candidates.push({
       label: 'X-Babylon-Api-Key',
-      headers: { 'X-Babylon-Api-Key': API_KEY },
+      headers: { 'X-Babylon-Api-Key': apiKey },
     });
   }
 
-  if (compact(PRIVY_TOKEN)) {
+  if (privyToken) {
     candidates.push({
       label: 'Authorization Bearer (Privy token)',
-      headers: { Authorization: `Bearer ${PRIVY_TOKEN}` },
+      headers: { Authorization: `Bearer ${privyToken}` },
     });
     candidates.push({
       label: 'Privy token cookie',
-      headers: { Cookie: `privy-token=${PRIVY_TOKEN}` },
+      headers: { Cookie: `privy-token=${privyToken}` },
     });
   }
 
@@ -107,6 +119,18 @@ function extractAgentCredentials(payload) {
     payload?.data?.cronSecret;
 
   return { agentId, secret };
+}
+
+function extractExternalAgentId(payload) {
+  return (
+    payload?.agentId ||
+    payload?.id ||
+    payload?.agent?.id ||
+    payload?.agent?.agentId ||
+    payload?.data?.agentId ||
+    payload?.data?.id ||
+    null
+  );
 }
 
 async function onboardAndAuth() {
@@ -193,6 +217,8 @@ async function onboardAndAuth() {
       console.log(`Trying external register auth: ${attempt.label}`);
       const payload = await postJson('/api/agents/external/register', externalBody, attempt.headers);
       const apiKey = payload?.apiKey || payload?.data?.apiKey;
+      const returnedAgentId = extractExternalAgentId(payload);
+      const resolvedAgentId = returnedAgentId || AGENT_EXTERNAL_ID;
       if (!apiKey) {
         throw new Error(`External register response missing apiKey: ${JSON.stringify(payload)}`);
       }
@@ -200,8 +226,13 @@ async function onboardAndAuth() {
       console.log('\nExternal registration successful.');
       console.log(`- auth used: ${attempt.label}`);
       console.log(`- externalId: ${AGENT_EXTERNAL_ID}`);
+      if (returnedAgentId) {
+        console.log(`- returned agentId: ${returnedAgentId}`);
+      } else {
+        console.log('- returned agentId: [missing in response; using externalId fallback]');
+      }
       console.log('Use these env values:');
-      console.log(`BABYLON_AGENT_ID=${AGENT_EXTERNAL_ID}`);
+      console.log(`BABYLON_AGENT_ID=${resolvedAgentId}`);
       console.log(`BABYLON_API_KEY=${apiKey}`);
       console.log('\nImportant: store BABYLON_API_KEY securely now. It may not be retrievable later.');
       return;
