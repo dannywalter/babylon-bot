@@ -14,6 +14,24 @@ const DRY_RUN = process.env.DRY_RUN !== 'false';
 
 let msgId = 0;
 
+function fmtUsd(value) {
+  const n = Number(value);
+  if (!Number.isFinite(n)) return '$0.00';
+  return `$${n.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+}
+
+function buildYoloAlert({ emoji, ticker, event, side, price, trigger, pnl, size, reason, error }) {
+  const lines = [`${emoji} [YOLObot] ${ticker} ${event}`];
+  if (side) lines.push(`Side: ${side}`);
+  if (price) lines.push(`Price: ${price}`);
+  if (trigger) lines.push(`Trigger: ${trigger}`);
+  if (pnl) lines.push(`PnL: ${pnl}`);
+  if (size) lines.push(`Size: ${size}`);
+  if (reason) lines.push(`Reason: ${reason}`);
+  if (error) lines.push(`Error: ${error}`);
+  return lines.join('\n');
+}
+
 async function a2a(operation, params = {}) {
   const res = await fetch(A2A_URL, {
     method: 'POST',
@@ -39,8 +57,8 @@ async function a2a(operation, params = {}) {
 }
 
 async function notify(msg) {
-  console.log('[discord]', msg);
-  await notifyDiscord(`🤖 **YOLObot:** ${msg}`);
+  console.log('[discord]', msg.replaceAll('\n', ' | '));
+  await notifyDiscord(msg);
 }
 
 async function getBalance() {
@@ -124,15 +142,37 @@ async function runLoop() {
     console.log(`  ${ticker} ${String(pos.side || '').toUpperCase()} $${size} | PnL: ${pnlPct.toFixed(2)}%`);
 
     if (pnlPct <= -STOP_LOSS_PCT) {
-      const msg = `Stop loss hit on ${ticker} ${pos.side} (${pnlPct.toFixed(1)}%) - closing`;
-      console.log(msg);
+      const baseMsg = `Stop loss hit on ${ticker} ${pos.side} (${pnlPct.toFixed(1)}%) - closing`;
+      console.log(baseMsg);
       const result = positionId ? await closePosition(positionId) : null;
-      if (result) await notify(`${msg} | realizedPnL: $${result.realizedPnL?.toFixed(2) ?? '?'}`);
+      if (result) {
+        await notify(buildYoloAlert({
+          emoji: '🟡',
+          ticker,
+          event: 'EXIT',
+          side: String(pos.side || '').toUpperCase(),
+          pnl: `${fmtUsd(result.realizedPnL)} (${pnlPct.toFixed(1)}%)`,
+          size: fmtUsd(size),
+          trigger: `<= -${STOP_LOSS_PCT}%`,
+          reason: 'Stop loss hit',
+        }));
+      }
     } else if (pnlPct >= TAKE_PROFIT_PCT) {
-      const msg = `Take profit hit on ${ticker} ${pos.side} (+${pnlPct.toFixed(1)}%) - closing`;
-      console.log(msg);
+      const baseMsg = `Take profit hit on ${ticker} ${pos.side} (+${pnlPct.toFixed(1)}%) - closing`;
+      console.log(baseMsg);
       const result = positionId ? await closePosition(positionId) : null;
-      if (result) await notify(`${msg} | realizedPnL: $${result.realizedPnL?.toFixed(2) ?? '?'}`);
+      if (result) {
+        await notify(buildYoloAlert({
+          emoji: '🟢',
+          ticker,
+          event: 'EXIT',
+          side: String(pos.side || '').toUpperCase(),
+          pnl: `${fmtUsd(result.realizedPnL)} (+${pnlPct.toFixed(1)}%)`,
+          size: fmtUsd(size),
+          trigger: `>= +${TAKE_PROFIT_PCT}%`,
+          reason: 'Take profit hit',
+        }));
+      }
     }
   }
 
@@ -161,7 +201,16 @@ async function runLoop() {
     console.log(msg);
     const result = await openPosition(ticker, side, TRADE_SIZE);
     if (result) {
-      await notify(`${msg} | entry: $${result.position?.entryPrice ?? '?'}`);
+      await notify(buildYoloAlert({
+        emoji: '🔵',
+        ticker,
+        event: 'OPEN',
+        side: side.toUpperCase(),
+        price: fmtUsd(result.position?.entryPrice),
+        size: fmtUsd(TRADE_SIZE),
+        trigger: `${changePct.toFixed(1)}% 24h move`,
+        reason: 'Trend-following entry',
+      }));
     }
   }
 }
@@ -171,6 +220,12 @@ runLoop().then(() => {
   console.log('\nDone.');
 }).catch(async (err) => {
   console.error('Fatal error:', err.message);
-  await notify(`ERROR: ${err.message}`).catch(() => {});
+  await notify(buildYoloAlert({
+    emoji: '❌',
+    ticker: 'SYSTEM',
+    event: 'ERROR',
+    reason: 'Run loop aborted',
+    error: err.message,
+  })).catch(() => {});
   process.exit(1);
 });

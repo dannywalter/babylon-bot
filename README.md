@@ -5,9 +5,13 @@ Babylon trading automation scripts for perp flip execution, agent A2A operations
 ## What This Repo Runs
 
 Primary live workflow:
-- `.github/workflows/openagi-flip.yml`
+- `.github/workflows/position-flipper.yml`
 - Trigger: `workflow_dispatch` only
-- Runtime action: `node openagi-flip.js` (single check per invocation)
+- Runtime action: `node position-flipper.js` (single check per invocation)
+
+Legacy compatibility:
+- `.github/workflows/openagi-flip.yml` is kept so older dispatch URLs continue to work.
+- It runs the same `position-flipper.js` logic and can be removed after scheduler migration.
 
 Scheduling model:
 - GitHub Actions is not self-scheduled in this repo.
@@ -16,17 +20,18 @@ Scheduling model:
 
 ## Core Files
 
-- `openagi-flip.js`: Perp flip engine for user tickers + director-only tickers
+- `position-flipper.js`: Perp flip engine for user tickers + director-only tickers
+- `openagi-flip.js`: Deprecated compatibility shim that forwards to `position-flipper.js`
 - `perp-client.js`: Shared Babylon transport helpers
   - REST: `restGet`, `restPost`
   - MCP: `mcpCall`
   - Agent A2A: `a2aAgentCall`
   - Notifications: `notifyDiscord`
 - `one-shot-open.js`: Open a single perp position on a target agent
-- `yolobot.js`: Autonomous strategy loop for YOLO bot profile
+- `yolobot.js`: Manual autonomous strategy loop for YOLO bot profile; not wired into CI or Procfile
 - `trading-core.js`: Generic utility helpers (env parsing, risk helpers, etc.)
 
-## Flip Logic (openagi-flip.js)
+## Flip Logic (position-flipper.js)
 
 For each ticker:
 - LONG -> SHORT when price is above `{TICKER}_FLIP_TO_SHORT_ABOVE`
@@ -46,9 +51,10 @@ Director-only tickers:
 - `npm run flip:spcx`: watch SPCX only
 - `npm run flip:spcx:dry`: dry-run SPCX watch
 - `npm run positions`: show perp positions
-- `npm run yolobot`: run yolobot strategy loop
+- `npm run yolobot`: run yolobot strategy loop manually
+- `npm run yolo:manual`: alias for the same manual strategy loop
 
-Note: CI uses one-shot mode (`node openagi-flip.js`), not `--watch`.
+Note: CI uses one-shot mode (`node position-flipper.js`), not `--watch`.
 
 ## Required Environment Variables
 
@@ -83,6 +89,7 @@ Director optional:
 Local syntax checks:
 
 ```bash
+node --check position-flipper.js
 node --check openagi-flip.js
 node --check perp-client.js
 node --check one-shot-open.js
@@ -92,5 +99,5 @@ node --check yolobot.js
 Local dry-run:
 
 ```bash
-node openagi-flip.js --dry-run
+node position-flipper.js --dry-run
 ```

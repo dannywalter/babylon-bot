@@ -1,4 +1,4 @@
-name: Position Flipper (Legacy Dispatch Path)
+name: Position Flipper
 
 on:
   workflow_dispatch:
