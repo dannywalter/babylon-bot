@@ -9,13 +9,10 @@ Primary live workflow:
 - Trigger: `workflow_dispatch` only
 - Runtime action: `node position-flipper.js` (single check per invocation)
 
-Legacy compatibility:
-- `.github/workflows/openagi-flip.yml` is kept so older dispatch URLs continue to work.
-- It runs the same `position-flipper.js` logic and can be removed after scheduler migration.
-
 Scheduling model:
 - GitHub Actions is not self-scheduled in this repo.
-- External scheduler (for example `cron-job.org`) dispatches the workflow every 5 minutes.
+- External scheduler (for example `cron-job.org`) dispatches `position-flipper.yml` every 5 minutes.
+- GitHub API dispatch path: `/repos/dannywalter/babylon-bot/actions/workflows/position-flipper.yml/dispatches`
 - Each invocation performs one pass over configured tickers and exits.
 
 ## Core Files
