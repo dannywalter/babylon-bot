@@ -12,12 +12,16 @@ require('dotenv').config();
 const http = require('http');
 
 const PORT = process.env.PORT || 3000;
-const BASE_URL = process.env.BASE_URL || `http://localhost:${PORT}`;
+const AGENT_NAME = process.env.AGENT_NAME || 'DOCTOR ASS';
+const AGENT_DESCRIPTION =
+  process.env.AGENT_DESCRIPTION ||
+  'A high-risk, high-reward YOLO trader who lives for the thrill of the trade. No risk, no reward, no problem. Medical Doctor of Ass.';
+const BASE_URL = (process.env.BASE_URL || `http://localhost:${PORT}`).replace(/\/$/, '');
 
 const AGENT_CARD = {
   protocolVersion: '0.3.0',
-  name: 'DOCTOR ASS',
-  description: 'A high-risk, high-reward YOLO trader who lives for the thrill of the trade. No risk, no reward, no problem. Medical Doctor of Ass.',
+  name: AGENT_NAME,
+  description: AGENT_DESCRIPTION,
   url: `${BASE_URL}/a2a`,
   preferredTransport: 'JSONRPC',
   provider: { organization: 'Babylon', url: 'https://babylon.market' },
