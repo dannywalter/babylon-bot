@@ -55,10 +55,11 @@ const DIRECTOR_TICKERS = process.env.DIRECTOR_TICKERS
   : [];
 
 const DIRECTOR_TICKER_DEFAULTS = {
-  AIPHB: { flipToShortAbove: 600,  flipToLongBelow: 130 },
-  AIPPL: { flipToShortAbove: 700,  flipToLongBelow: 100 },
-  TSLAI: { flipToShortAbove: 800,  flipToLongBelow: 120 },
-  SPCX:  { flipToShortAbove: 700,  flipToLongBelow:  80 },
+  AIPHB:   { flipToShortAbove: 600,   flipToLongBelow:  130 },
+  AIPPL:   { flipToShortAbove: 700,   flipToLongBelow:  100 },
+  TSLAI:   { flipToShortAbove: 800,   flipToLongBelow:  120 },
+  SPCX:    { flipToShortAbove: 700,   flipToLongBelow:   80 },
+  OPENAGI: { flipToShortAbove: 1800,  flipToLongBelow:  350 },
 };
 
 function getDirectorAgentId(ticker) {
