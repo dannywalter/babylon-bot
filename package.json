@@ -13,6 +13,7 @@
     "openai:mcp": "node openai-mcp-chat.mjs",
     "list:tools": "node list-tools.js",
     "flip": "node position-flipper.js",
+    "agent:flip": "node agent-flipper.js",
     "flip:watch": "node position-flipper.js --watch",
     "flip:dry": "node position-flipper.js --dry-run --watch",
     "flip:openagi": "TICKERS=OPENAGI node position-flipper.js --watch",

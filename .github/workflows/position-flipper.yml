@@ -66,3 +66,36 @@ jobs:
           DRY_RUN: ${{ vars.DRY_RUN || 'false' }}
           DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
         run: node position-flipper.js
+
+  agent-flip:
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    env:
+      FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Run agent flipper
+        env:
+          BABYLON_AGENT_ID: ${{ secrets.BABYLON_AGENT_ID }}
+          BABYLON_AGENT_API_KEY: ${{ secrets.BABYLON_AGENT_API_KEY }}
+          AGENT_LABEL: ${{ vars.AGENT_LABEL || 'DOCTOR ASS' }}
+          AGENT_TICKERS: ${{ vars.AGENT_TICKERS || 'TSLAI' }}
+          AGENT_TRADE_SIZE: ${{ vars.AGENT_TRADE_SIZE || '900000' }}
+          TSLAI_AGENT_FLIP_TO_SHORT_ABOVE: ${{ vars.TSLAI_AGENT_FLIP_TO_SHORT_ABOVE || '970' }}
+          TSLAI_AGENT_FLIP_TO_LONG_BELOW: ${{ vars.TSLAI_AGENT_FLIP_TO_LONG_BELOW || '120' }}
+          POLL_INTERVAL_MS: ${{ vars.POLL_INTERVAL_MS || '30000' }}
+          DRY_RUN: ${{ vars.AGENT_DRY_RUN || vars.DRY_RUN || 'false' }}
+          DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
+        run: node agent-flipper.js
