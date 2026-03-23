@@ -58,6 +58,7 @@ const DIRECTOR_TICKER_DEFAULTS = {
   AIPHB: { flipToShortAbove: 600,  flipToLongBelow: 130 },
   AIPPL: { flipToShortAbove: 700,  flipToLongBelow: 100 },
   TSLAI: { flipToShortAbove: 800,  flipToLongBelow: 120 },
+  SPCX:  { flipToShortAbove: 700,  flipToLongBelow:  80 },
 };
 
 function getDirectorAgentId(ticker) {
