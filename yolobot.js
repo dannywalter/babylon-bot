@@ -5,10 +5,11 @@
  */
 require('dotenv').config({ quiet: true });
 
+const { notifyDiscord } = require('./perp-client');
+
 const A2A_URL = 'https://babylon.market/api/a2a';
 const API_KEY = process.env.BABYLON_API_KEY;
 const AGENT_ID = process.env.YOLOBOT_AGENT_ID;
-const DISCORD_WEBHOOK = process.env.DISCORD_WEBHOOK_URL;
 const DRY_RUN = process.env.DRY_RUN !== 'false';
 
 let msgId = 0;
@@ -39,12 +40,7 @@ async function a2a(operation, params = {}) {
 
 async function notify(msg) {
   console.log('[discord]', msg);
-  if (!DISCORD_WEBHOOK) return;
-  await fetch(DISCORD_WEBHOOK, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ content: `🤖 **YOLObot:** ${msg}` }),
-  }).catch(e => console.error('Discord error:', e.message));
+  await notifyDiscord(`🤖 **YOLObot:** ${msg}`);
 }
 
 async function getBalance() {
@@ -54,7 +50,29 @@ async function getBalance() {
 
 async function getPositions() {
   const data = await a2a('portfolio.get_positions');
-  return data.perpPositions ?? [];
+  const candidates = [
+    data?.perpPositions,
+    data?.perpetuals?.positions,
+    data?.perpetuals,
+    data?.positions,
+  ];
+
+  for (const candidate of candidates) {
+    if (!Array.isArray(candidate)) continue;
+
+    // Keep only perp-like entries and only currently open positions.
+    const perps = candidate.filter((position) => {
+      const ticker = String(position?.ticker ?? '').trim();
+      const size = Number(position?.size ?? position?.collateral ?? 0);
+      return Boolean(ticker) && Number.isFinite(size) && size > 0 && !position?.closedAt;
+    });
+
+    if (perps.length > 0) {
+      return perps;
+    }
+  }
+
+  return [];
 }
 
 async function getPerps() {
@@ -96,25 +114,30 @@ async function runLoop() {
 
   // ── 1. Manage existing positions ──────────────────────────────────────
   for (const pos of positions) {
-    if (!TICKERS.includes(pos.ticker)) continue;
-    const pnlPct = pos.unrealizedPnL / pos.size * 100;
-    console.log(`  ${pos.ticker} ${pos.side.toUpperCase()} $${pos.size} | PnL: ${pnlPct.toFixed(2)}%`);
+    const ticker = String(pos.ticker || '').toUpperCase();
+    if (!TICKERS.includes(ticker)) continue;
+
+    const size = Number(pos.size ?? pos.collateral ?? 0);
+    const pnl = Number(pos.unrealizedPnL ?? 0);
+    const pnlPct = size > 0 ? (pnl / size) * 100 : 0;
+    const positionId = pos.id ?? pos.positionId;
+    console.log(`  ${ticker} ${String(pos.side || '').toUpperCase()} $${size} | PnL: ${pnlPct.toFixed(2)}%`);
 
     if (pnlPct <= -STOP_LOSS_PCT) {
-      const msg = `Stop loss hit on ${pos.ticker} ${pos.side} (${pnlPct.toFixed(1)}%) — closing`;
+      const msg = `Stop loss hit on ${ticker} ${pos.side} (${pnlPct.toFixed(1)}%) - closing`;
       console.log(msg);
-      const result = await closePosition(pos.id);
+      const result = positionId ? await closePosition(positionId) : null;
       if (result) await notify(`${msg} | realizedPnL: $${result.realizedPnL?.toFixed(2) ?? '?'}`);
     } else if (pnlPct >= TAKE_PROFIT_PCT) {
-      const msg = `Take profit hit on ${pos.ticker} ${pos.side} (+${pnlPct.toFixed(1)}%) — closing`;
+      const msg = `Take profit hit on ${ticker} ${pos.side} (+${pnlPct.toFixed(1)}%) - closing`;
       console.log(msg);
-      const result = await closePosition(pos.id);
+      const result = positionId ? await closePosition(positionId) : null;
       if (result) await notify(`${msg} | realizedPnL: $${result.realizedPnL?.toFixed(2) ?? '?'}`);
     }
   }
 
   // ── 2. Look for new entries ────────────────────────────────────────────
-  const openTickers = new Set(positions.map(p => p.ticker));
+  const openTickers = new Set(positions.map((p) => String(p.ticker || '').toUpperCase()));
 
   for (const ticker of TICKERS) {
     if (openTickers.has(ticker)) continue; // already in position
