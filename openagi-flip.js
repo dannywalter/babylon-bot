@@ -93,6 +93,12 @@ function getDirectorTradeSize(ticker) {
   return parseNumber(process.env[`${ticker}_DIRECTOR_TRADE_SIZE`], DIRECTOR_TRADE_SIZE);
 }
 
+function fmtUsd(value) {
+  const n = Number(value);
+  if (!Number.isFinite(n)) return '$0.00';
+  return `$${n.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+}
+
 // ── Price / position fetchers ─────────────────────────────────────────────────
 
 async function getPrice(ticker) {
@@ -126,15 +132,18 @@ async function checkFlip({ ticker, label, thresholds, getPos, closePos, openPos 
   const [price, position] = await Promise.all([getPrice(ticker), getPos()]);
 
   const side    = position?.side ?? 'none';
-  const pnl     = position ? `$${position.unrealizedPnL?.toFixed(2)}` : 'n/a';
+  const pnl     = position ? fmtUsd(position.unrealizedPnL) : 'n/a';
   const pnlPct  = position ? `${(position.unrealizedPnLPercent ?? 0).toFixed(2)}%` : 'n/a';
-  const sizeStr = position?.size ? `\nSize: $${Number(position.size).toLocaleString()}` : '';
+  const sizeStr = position?.size ? `\nSize: ${fmtUsd(position.size)}` : '';
+  const priceStr = fmtUsd(price);
+  const flipShortStr = fmtUsd(flipToShortAbove);
+  const flipLongStr = fmtUsd(flipToLongBelow);
 
-  console.log(`[${new Date().toISOString()}] [${label}] ${ticker} price=$${price.toFixed(2)}  position=${side.toUpperCase()}  uPnL=${pnl} (${pnlPct})`);
-  console.log(`  Thresholds: flip-to-SHORT above $${flipToShortAbove}  |  flip-to-LONG below $${flipToLongBelow}`);
+  console.log(`[${new Date().toISOString()}] [${label}] ${ticker} price=${priceStr}  position=${side.toUpperCase()}  uPnL=${pnl} (${pnlPct})`);
+  console.log(`  Thresholds: flip-to-SHORT above ${flipShortStr}  |  flip-to-LONG below ${flipLongStr}`);
 
   if (price > flipToShortAbove && side === 'long') {
-    const header = `🔴 [${label}] ${ticker} FLIP: LONG → SHORT\nPrice $${price.toFixed(2)} crossed above $${flipToShortAbove}\nuPnL at signal: ${pnl} (${pnlPct})${sizeStr}`;
+    const header = `🔴 [${label}] ${ticker} FLIP: LONG → SHORT\nPrice ${priceStr} crossed above ${flipShortStr}\nuPnL at signal: ${pnl} (${pnlPct})${sizeStr}`;
     console.log(`  *** ${header.replaceAll('\n', ' | ')} ***`);
     try {
       if (!DRY_RUN) {
@@ -152,7 +161,7 @@ async function checkFlip({ ticker, label, thresholds, getPos, closePos, openPos 
   }
 
   if (price < flipToLongBelow && side === 'short') {
-    const header = `🟢 [${label}] ${ticker} FLIP: SHORT → LONG\nPrice $${price.toFixed(2)} dropped below $${flipToLongBelow}\nuPnL at signal: ${pnl} (${pnlPct})${sizeStr}`;
+    const header = `🟢 [${label}] ${ticker} FLIP: SHORT → LONG\nPrice ${priceStr} dropped below ${flipLongStr}\nuPnL at signal: ${pnl} (${pnlPct})${sizeStr}`;
     console.log(`  *** ${header.replaceAll('\n', ' | ')} ***`);
     try {
       if (!DRY_RUN) {
