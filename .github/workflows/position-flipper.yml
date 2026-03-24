@@ -1,3 +1,5 @@
+# yamllint disable rule:line-length
+# ${{ github.event.inputs }} and ${{ vars.* }} variables are dynamically resolved at runtime
 name: Position Flipper
 
 on:
