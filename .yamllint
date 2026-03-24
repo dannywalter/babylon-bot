@@ -1,7 +1,6 @@
 extends: default
 rules:
   line-length: disable
-  comments:
-    min-spaces-from-content: 1
-  indentation:
-    spaces: consistent
+  comments-indentation: disable
+  anchors: disable
+  key-duplicates: disable
