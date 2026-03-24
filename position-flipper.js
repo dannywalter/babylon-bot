@@ -45,7 +45,7 @@ const WATCH    = args.includes('--watch');
 const DRY_RUN  = args.includes('--dry-run') || process.env.DRY_RUN === 'true';
 
 const TICKERS          = parseCsv(process.env.TICKERS  || 'OPENAGI,SPCX').map(t => t.toUpperCase());
-const DIRECTOR_TICKERS = parseCsv(process.env.DIRECTOR_TICKERS).map(t => t.toUpperCase());
+const DIRECTOR_KEYS = parseCsv(process.env.DIRECTOR_TICKERS).map(t => t.toUpperCase());
 
 const DIRECTOR_AGENT_ID   = process.env.DIRECTOR_AGENT_ID;
 const DIRECTOR_TRADE_SIZE = parseNumber(process.env.DIRECTOR_TRADE_SIZE, 0);
@@ -81,16 +81,63 @@ function getDirectorThresholds(ticker) {
   };
 }
 
+function splitDirectorKey(directorKey) {
+  const [ticker] = String(directorKey || '').split('__');
+  return { marketTicker: String(ticker || '').toUpperCase() };
+}
+
+function getDirectorThresholdsForKey(directorKey) {
+  const { marketTicker } = splitDirectorKey(directorKey);
+  const d = DIRECTOR_TICKER_DEFAULTS[marketTicker] ?? { flipToShortAbove: Infinity, flipToLongBelow: -Infinity };
+  return {
+    flipToShortAbove: parseNumber(
+      process.env[`${directorKey}_DIRECTOR_FLIP_TO_SHORT_ABOVE`],
+      parseNumber(process.env[`${marketTicker}_DIRECTOR_FLIP_TO_SHORT_ABOVE`], d.flipToShortAbove)
+    ),
+    flipToLongBelow: parseNumber(
+      process.env[`${directorKey}_DIRECTOR_FLIP_TO_LONG_BELOW`],
+      parseNumber(process.env[`${marketTicker}_DIRECTOR_FLIP_TO_LONG_BELOW`], d.flipToLongBelow)
+    ),
+  };
+}
+
 function getDirectorAgentId(ticker) {
   return process.env[`${ticker}_DIRECTOR_AGENT_ID`] ?? DIRECTOR_AGENT_ID;
+}
+
+function getDirectorAgentIdForKey(directorKey) {
+  const { marketTicker } = splitDirectorKey(directorKey);
+  return (
+    process.env[`${directorKey}_DIRECTOR_AGENT_ID`] ??
+    process.env[`${marketTicker}_DIRECTOR_AGENT_ID`] ??
+    DIRECTOR_AGENT_ID
+  );
 }
 
 function getDirectorAgentName(ticker) {
   return process.env[`${ticker}_DIRECTOR_AGENT_NAME`] ?? getDirectorAgentId(ticker) ?? 'Director';
 }
 
+function getDirectorAgentNameForKey(directorKey, agentId) {
+  const { marketTicker } = splitDirectorKey(directorKey);
+  return (
+    process.env[`${directorKey}_DIRECTOR_AGENT_NAME`] ??
+    process.env[`${marketTicker}_DIRECTOR_AGENT_NAME`] ??
+    agentId ??
+    'Director'
+  );
+}
+
 function getDirectorTradeSize(ticker) {
   return parseNumber(process.env[`${ticker}_DIRECTOR_TRADE_SIZE`], DIRECTOR_TRADE_SIZE);
+}
+
+function getDirectorTradeSizeForKey(directorKey) {
+  const { marketTicker } = splitDirectorKey(directorKey);
+  return parseNumber(
+    process.env[`${directorKey}_DIRECTOR_TRADE_SIZE`],
+    parseNumber(process.env[`${marketTicker}_DIRECTOR_TRADE_SIZE`], DIRECTOR_TRADE_SIZE)
+  );
 }
 
 function fmtUsd(value) {
@@ -288,10 +335,11 @@ async function syncDirectorAgent(side, ticker) {
 // ── Director-only ticker check ────────────────────────────────────────────────
 // Watches an agent's own position and flips it — no user-side position required.
 
-async function checkDirectorTicker(ticker) {
-  const agentId    = getDirectorAgentId(ticker);
-  const agentLabel = getDirectorAgentName(ticker);
-  const tradeSize  = getDirectorTradeSize(ticker);
+async function checkDirectorTicker(directorKey) {
+  const { marketTicker: ticker } = splitDirectorKey(directorKey);
+  const agentId    = getDirectorAgentIdForKey(directorKey);
+  const agentLabel = getDirectorAgentNameForKey(directorKey, agentId);
+  const tradeSize  = getDirectorTradeSizeForKey(directorKey);
 
   if (!agentId) {
     console.warn(`  [Director] No agent ID for ${ticker} — set ${ticker}_DIRECTOR_AGENT_ID or DIRECTOR_AGENT_ID`);
@@ -321,7 +369,7 @@ async function checkDirectorTicker(ticker) {
   await checkFlip({
     ticker,
     label: agentLabel,
-    thresholds: getDirectorThresholds(ticker),
+    thresholds: getDirectorThresholdsForKey(directorKey),
     getPos: async () => {
       const data = await restGet(`/api/markets/positions/${encodeURIComponent(agentId)}`);
       return (data?.perpetuals?.positions ?? []).find(p => p.ticker === ticker) ?? null;
@@ -345,7 +393,7 @@ async function main() {
 
   if (DRY_RUN) console.log('[DRY RUN MODE — no trades will execute]\n');
   if (TICKERS.length)          console.log(`Monitoring tickers: ${TICKERS.join(', ')}`);
-  if (DIRECTOR_TICKERS.length) console.log(`Director tickers:   ${DIRECTOR_TICKERS.join(', ')} (agent-only)`);
+  if (DIRECTOR_KEYS.length) console.log(`Director tickers:   ${DIRECTOR_KEYS.join(', ')} (agent-only)`);
   console.log();
 
   async function checkAll() {
@@ -357,9 +405,9 @@ async function main() {
         }
       }
     }
-    for (const ticker of DIRECTOR_TICKERS) {
-      try { await checkDirectorTicker(ticker); } catch (e) {
-        console.error(`[ERROR] [Director] ${ticker}:`, e.message);
+    for (const directorKey of DIRECTOR_KEYS) {
+      try { await checkDirectorTicker(directorKey); } catch (e) {
+        console.error(`[ERROR] [Director] ${directorKey}:`, e.message);
       }
     }
   }
