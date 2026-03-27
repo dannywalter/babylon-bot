@@ -413,9 +413,35 @@ async function checkDirectorTicker(directorKey) {
     },
     closePos: tryClose,
     openPos: async (side) => {
-      console.log(`  [${agentLabel}] Opening 1x ${side.toUpperCase()} ${ticker} size=$${tradeSize}…`);
-      const result = await a2aAgentCall('markets.open_position', { ticker, side, amount: tradeSize, leverage: 1 }, agentId, agentId);
-      console.log(`  [${agentLabel}] Done:`, JSON.stringify(result));
+      // Check if the agent is already at or near the $1M per-agent cap before opening.
+      const allPos = await restGet(`/api/markets/positions/${encodeURIComponent(agentId)}`);
+      const totalNotional = (allPos?.perpetuals?.positions ?? [])
+        .reduce((sum, p) => sum + (p.size ?? 0), 0);
+      const AGENT_CAP = 1_000_000;
+      if (totalNotional >= AGENT_CAP * 0.99) {
+        console.log(`  [${agentLabel}] Skipping recovery: agent already holds $${Math.round(totalNotional).toLocaleString()} (at cap).`);
+        return;
+      }
+
+      // Clamp size to what remains under the agent cap, then attempt open.
+      // If Babylon rejects due to a market-level limit, parse the limit from
+      // the error and retry once at that lower size.
+      const size = Math.min(tradeSize, AGENT_CAP - totalNotional);
+      console.log(`  [${agentLabel}] Opening 1x ${side.toUpperCase()} ${ticker} size=$${size}…`);
+      try {
+        const result = await a2aAgentCall('markets.open_position', { ticker, side, amount: size, leverage: 1 }, agentId, agentId);
+        console.log(`  [${agentLabel}] Done:`, JSON.stringify(result));
+      } catch (e) {
+        const marketLimitMatch = e.message.match(/market limit \(([\d,]+(?:\.\d+)?)\)/);
+        if (marketLimitMatch) {
+          const marketCap = Math.floor(parseFloat(marketLimitMatch[1].replace(/,/g, '')));
+          console.warn(`  [${agentLabel}] Market cap hit at $${marketCap.toLocaleString()}, retrying…`);
+          const result = await a2aAgentCall('markets.open_position', { ticker, side, amount: marketCap, leverage: 1 }, agentId, agentId);
+          console.log(`  [${agentLabel}] Done (capped):`, JSON.stringify(result));
+        } else {
+          throw e;
+        }
+      }
     },
   });
 }
