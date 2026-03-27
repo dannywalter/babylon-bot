@@ -18,8 +18,7 @@
  *   BABYLON_BASE_URL                override base URL (default https://play.babylon.market)
  *   TICKERS                         comma-separated list, default "OPENAGI,SPCX"
  *   {TICKER}_FLIP_TO_SHORT_ABOVE    e.g. OPENAGI_FLIP_TO_SHORT_ABOVE=1750
- *   {TICKER}_FLIP_TO_LONG_BELOW     e.g. OPENAGI_FLIP_TO_LONG_BELOW=200
- *   POLL_INTERVAL_MS                default 30000
+ *   {TICKER}_FLIP_TO_LONG_BELOW     e.g. OPENAGI_FLIP_TO_LONG_BELOW=200 *   {TICKER}_DEFAULT_OPEN_SIZE      fallback size for user-ticker recovery when no position exists *   POLL_INTERVAL_MS                default 30000
  *   DISCORD_WEBHOOK_URL             Discord webhook for flip notifications
  *   DIRECTOR_AGENT_ID               Default director agent ID
  *   DIRECTOR_TRADE_SIZE             Default dollar size for director trades (e.g. 900000)
@@ -281,6 +280,40 @@ async function checkFlip({ ticker, label, thresholds, getPos, closePos, openPos 
     return;
   }
 
+  if (side === 'none') {
+    const targetSide = price > flipToShortAbove ? 'short' : 'long';
+    const header = buildAlert({
+      emoji: '🟡',
+      label,
+      ticker,
+      event: 'RECOVER',
+      side: targetSide.toUpperCase(),
+      price: priceStr,
+      reason: 'No position found — opening to restore coverage',
+    });
+    console.log(`  *** ${header.replaceAll('\n', ' | ')} ***`);
+    try {
+      if (!DRY_RUN) {
+        await openPos(targetSide, null);
+        await notifyDiscord(header);
+      } else {
+        console.log(`  [${label}] [DRY RUN] no position found, would open ${targetSide.toUpperCase()}`);
+      }
+    } catch (e) {
+      console.error(`  [RECOVER ERROR] ${e.message}`);
+      await notifyDiscord(buildAlert({
+        emoji: '❌',
+        label,
+        ticker,
+        event: 'RECOVER FAILED',
+        side: targetSide.toUpperCase(),
+        price: priceStr,
+        error: e.message,
+      }));
+    }
+    return;
+  }
+
   console.log('  No action needed.');
 }
 
@@ -298,7 +331,11 @@ async function checkUserTicker(ticker) {
       console.log('  Closed via MCP:', JSON.stringify(result));
     },
     openPos: async (side, prevPos) => {
-      const size = prevPos.size;
+      const size = prevPos?.size ?? parseNumber(process.env[`${ticker}_DEFAULT_OPEN_SIZE`], 0);
+      if (!size) {
+        console.warn(`  [${ticker}] Cannot recover: no position size reference. Set ${ticker}_DEFAULT_OPEN_SIZE to enable.`);
+        return;
+      }
       console.log(`  → Opening 1x ${side.toUpperCase()} ${ticker} size=${size}…`);
       const result = await mcpCall('open_position', { ticker, side: side.toUpperCase(), amount: size, leverage: 1 });
       console.log('  Opened via MCP:', JSON.stringify(result));
