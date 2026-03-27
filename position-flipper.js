@@ -18,7 +18,8 @@
  *   BABYLON_BASE_URL                override base URL (default https://play.babylon.market)
  *   TICKERS                         comma-separated list, default "OPENAGI,SPCX"
  *   {TICKER}_FLIP_TO_SHORT_ABOVE    e.g. OPENAGI_FLIP_TO_SHORT_ABOVE=1750
- *   {TICKER}_FLIP_TO_LONG_BELOW     e.g. OPENAGI_FLIP_TO_LONG_BELOW=200 *   {TICKER}_DEFAULT_OPEN_SIZE      fallback size for user-ticker recovery when no position exists *   POLL_INTERVAL_MS                default 30000
+ *   {TICKER}_FLIP_TO_LONG_BELOW     e.g. OPENAGI_FLIP_TO_LONG_BELOW=200
+ *   POLL_INTERVAL_MS                default 30000
  *   DISCORD_WEBHOOK_URL             Discord webhook for flip notifications
  *   DIRECTOR_AGENT_ID               Default director agent ID
  *   DIRECTOR_TRADE_SIZE             Default dollar size for director trades (e.g. 900000)
@@ -183,9 +184,10 @@ async function getUserPosition(ticker) {
  * @param {{ flipToShortAbove: number, flipToLongBelow: number }} opts.thresholds
  * @param {() => Promise<object|null>} opts.getPos    resolves current position or null
  * @param {(pos: object) => Promise<void>} opts.closePos
- * @param {(side: string, pos: object) => Promise<void>} opts.openPos
+ * @param {(side: string, pos: object|null) => Promise<void>} opts.openPos
+ * @param {boolean} [opts.recoverMissingPosition=false]
  */
-async function checkFlip({ ticker, label, thresholds, getPos, closePos, openPos }) {
+async function checkFlip({ ticker, label, thresholds, getPos, closePos, openPos, recoverMissingPosition = false }) {
   const { flipToShortAbove, flipToLongBelow } = thresholds;
   const [price, position] = await Promise.all([getPrice(ticker), getPos()]);
 
@@ -280,7 +282,7 @@ async function checkFlip({ ticker, label, thresholds, getPos, closePos, openPos 
     return;
   }
 
-  if (side === 'none') {
+  if (recoverMissingPosition && side === 'none') {
     const targetSide = price > flipToShortAbove ? 'short' : 'long';
     const header = buildAlert({
       emoji: '🟡',
@@ -324,6 +326,7 @@ async function checkUserTicker(ticker) {
     ticker,
     label: ticker,
     thresholds: getThresholds(ticker),
+    recoverMissingPosition: false,
     getPos: () => getUserPosition(ticker),
     closePos: async (pos) => {
       console.log(`  → Closing position ${pos.id}…`);
@@ -331,11 +334,7 @@ async function checkUserTicker(ticker) {
       console.log('  Closed via MCP:', JSON.stringify(result));
     },
     openPos: async (side, prevPos) => {
-      const size = prevPos?.size ?? parseNumber(process.env[`${ticker}_DEFAULT_OPEN_SIZE`], 0);
-      if (!size) {
-        console.warn(`  [${ticker}] Cannot recover: no position size reference. Set ${ticker}_DEFAULT_OPEN_SIZE to enable.`);
-        return;
-      }
+      const size = prevPos.size;
       console.log(`  → Opening 1x ${side.toUpperCase()} ${ticker} size=${size}…`);
       const result = await mcpCall('open_position', { ticker, side: side.toUpperCase(), amount: size, leverage: 1 });
       console.log('  Opened via MCP:', JSON.stringify(result));
@@ -407,6 +406,7 @@ async function checkDirectorTicker(directorKey) {
     ticker,
     label: agentLabel,
     thresholds: getDirectorThresholdsForKey(directorKey),
+    recoverMissingPosition: true,
     getPos: async () => {
       const data = await restGet(`/api/markets/positions/${encodeURIComponent(agentId)}`);
       return (data?.perpetuals?.positions ?? []).find(p => p.ticker === ticker) ?? null;
