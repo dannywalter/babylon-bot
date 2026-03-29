@@ -98,3 +98,49 @@ Local dry-run:
 ```bash
 node position-flipper.js --dry-run
 ```
+
+## Always-On Local MCP Agent
+
+This repo now includes an opt-in local worker for periodic MCP tasks:
+- Reputation checks
+- Account snapshots (balance and positions)
+- Optional feed comments
+- Optional feed posts
+
+Run continuously:
+
+```bash
+npm run always-on
+```
+
+Run one pass and exit:
+
+```bash
+npm run always-on:once
+```
+
+Safety defaults:
+- Mutating tasks are disabled unless explicitly enabled.
+- Existing scripts and workflow behavior are unchanged unless you launch this worker.
+
+Suggested environment values:
+
+```bash
+BABYLON_AUTH_MODE=auto
+POLL_INTERVAL_MS=30000
+
+ENABLE_REPUTATION_TASK=true
+ENABLE_ACCOUNT_TASK=true
+ENABLE_COMMENT_TASK=false
+ENABLE_POST_TASK=false
+
+ALLOW_MUTATING_TOOLS=false
+```
+
+Enable social automation explicitly:
+
+```bash
+ALLOW_MUTATING_TOOLS=true
+ENABLE_COMMENT_TASK=true
+ENABLE_POST_TASK=true
+```

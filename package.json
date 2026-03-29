@@ -20,6 +20,8 @@
     "flip:spcx": "TICKERS=SPCX node position-flipper.js --watch",
     "flip:spcx:dry": "TICKERS=SPCX node position-flipper.js --dry-run --watch",
     "a2a:send": "node send-a2a.js",
+    "always-on": "node always-on-agent.js",
+    "always-on:once": "RUN_ONCE=true node always-on-agent.js",
     "eliza": "cd eliza && elizaos start",
     "eliza:dev": "cd eliza && elizaos dev"
   },

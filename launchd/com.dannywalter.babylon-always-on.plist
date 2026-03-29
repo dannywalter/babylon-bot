@@ -1,0 +1,51 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+
+  <!-- Unique service label — must match the filename -->
+  <key>Label</key>
+  <string>com.dannywalter.babylon-always-on</string>
+
+  <!-- Command: full path to node + entrypoint (relative to WorkingDirectory) -->
+  <key>ProgramArguments</key>
+  <array>
+    <string>/opt/homebrew/bin/node</string>
+    <string>always-on-agent.js</string>
+  </array>
+
+  <!-- Run from repo root so dotenv loads .env correctly -->
+  <key>WorkingDirectory</key>
+  <string>/Users/dannywalter/babylon-bot</string>
+
+  <!-- Start agent when this plist is loaded (login or manual launchctl load) -->
+  <key>RunAtLoad</key>
+  <true/>
+
+  <!-- Restart the process automatically if it crashes or exits non-zero -->
+  <key>KeepAlive</key>
+  <dict>
+    <key>SuccessfulExit</key>
+    <false/>
+  </dict>
+
+  <!-- Minimum seconds between automatic restarts (prevents tight crash loops) -->
+  <key>ThrottleInterval</key>
+  <integer>30</integer>
+
+  <!-- Log files — directory is created by install-launchd.sh -->
+  <key>StandardOutPath</key>
+  <string>/Users/dannywalter/babylon-bot/logs/always-on-agent.log</string>
+
+  <key>StandardErrorPath</key>
+  <string>/Users/dannywalter/babylon-bot/logs/always-on-agent.error.log</string>
+
+  <!-- Ensure Homebrew node is on PATH inside the launchd environment -->
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>PATH</key>
+    <string>/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin</string>
+  </dict>
+
+</dict>
+</plist>
