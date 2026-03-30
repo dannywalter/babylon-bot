@@ -78,6 +78,10 @@ function loadConfig() {
     enableReplyTask: envFlag(process.env.ENABLE_REPLY_TASK, false),
     allowFlatReplies: envFlag(process.env.ALLOW_FLAT_REPLIES, false),
     maxEngageMemory: parseNumber(process.env.MAX_ENGAGE_MEMORY, 500),
+
+    enableLlmContent: envFlag(process.env.ENABLE_LLM_CONTENT, false),
+    llmModel: process.env.LLM_MODEL || "google/gemini-2.0-flash-001",
+    maxRecentPostTexts: parseNumber(process.env.MAX_RECENT_POST_TEXTS, 5),
   };
 }
 
@@ -341,6 +345,16 @@ async function main() {
   const statePath = path.resolve(process.cwd(), config.stateFile);
   const state = readState(statePath);
 
+  let llmAgent = null;
+  if (config.enableLlmContent && process.env.OPENROUTER_API_KEY) {
+    try {
+      llmAgent = require("./llm-social-agent");
+      console.log(JSON.stringify({ event: "llm-agent-loaded", model: config.llmModel }));
+    } catch (err) {
+      console.error(JSON.stringify({ event: "llm-agent-load-failed", error: String(err.message) }));
+    }
+  }
+
   const listedTools = await client.listTools();
   const { kept, blocked } = filterTools(listedTools, {
     allowMutatingTools: config.allowMutatingTools,
@@ -394,6 +408,7 @@ async function main() {
         }
 
         const rep = await callIfPresent(client, tools.getReputation, {});
+        state.latestReputationPoints = rep?.reputationPoints ?? state.latestReputationPoints ?? null;
         return {
           event: "reputation",
           timestamp: nowIso(),
@@ -411,12 +426,15 @@ async function main() {
       run: async () => {
         const balance = await callIfPresent(client, tools.getBalance, {});
         const positions = await callIfPresent(client, tools.getPositions, {});
+        const balanceValue = balance?.balance ?? balance?.availableBalance ?? balance?.cash ?? balance ?? null;
+        const positionCount = asArray(positions, "positions").length;
+        state.latestBalance = balanceValue;
+        state.latestPositionCount = positionCount;
         return {
           event: "account",
           timestamp: nowIso(),
-          balance:
-            balance?.balance ?? balance?.availableBalance ?? balance?.cash ?? balance ?? null,
-          positionCount: asArray(positions, "positions").length,
+          balance: balanceValue,
+          positionCount,
         };
       },
     },
@@ -468,7 +486,23 @@ async function main() {
           };
         }
 
-        const content = makeComment(candidate.content, config.commentLookaheadMinutes);
+        let content;
+        let contentSource = "template";
+        if (llmAgent) {
+          try {
+            content = await llmAgent.generateCommentText(candidate.content, {
+              balance: state.latestBalance,
+              positionCount: state.latestPositionCount,
+            }, { llmModel: config.llmModel });
+            contentSource = "llm";
+          } catch (err) {
+            console.error(JSON.stringify({ event: "llm-comment-failed", error: String(err.message) }));
+            content = makeComment(candidate.content, config.commentLookaheadMinutes);
+          }
+        } else {
+          content = makeComment(candidate.content, config.commentLookaheadMinutes);
+        }
+
         const created = await client.callTool(tools.createComment, {
           postId: candidate.id,
           content,
@@ -484,6 +518,7 @@ async function main() {
           timestamp: nowIso(),
           postId: candidate.id,
           commentId: created?.commentId ?? null,
+          contentSource,
         };
       },
     },
@@ -496,9 +531,37 @@ async function main() {
           return { event: "post-skipped", reason: "create_post-unavailable" };
         }
 
+        let feedSample = [];
+        if (tools.queryFeed) {
+          try {
+            const feedData = await client.callTool(tools.queryFeed, { limit: 10 });
+            feedSample = asArray(feedData, "posts").map(normalizePost).filter(Boolean);
+          } catch {}
+        }
+
+        let postContent;
+        let contentSource = "template";
+        if (llmAgent) {
+          try {
+            postContent = await llmAgent.generatePostText({
+              feedSample,
+              balance: state.latestBalance,
+              positionCount: state.latestPositionCount,
+              reputationPoints: state.latestReputationPoints,
+              recentPostTexts: state.recentPostTexts || [],
+            }, { llmModel: config.llmModel });
+            contentSource = "llm";
+          } catch (err) {
+            console.error(JSON.stringify({ event: "llm-post-failed", error: String(err.message) }));
+            postContent = makePostText(config);
+          }
+        } else {
+          postContent = makePostText(config);
+        }
+
         const created = await client.callTool(tools.createPost, {
           type: "post",
-          content: makePostText(config),
+          content: postContent,
         });
 
         const newPostId = created?.postId ?? null;
@@ -508,11 +571,16 @@ async function main() {
             config.maxCreatedPostMemory
           );
         }
+        state.recentPostTexts = [postContent, ...(state.recentPostTexts || [])].slice(
+          0,
+          config.maxRecentPostTexts
+        );
 
         return {
           event: "post-created",
           timestamp: nowIso(),
           postId: newPostId,
+          contentSource,
         };
       },
     },
