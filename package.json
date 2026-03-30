@@ -31,6 +31,7 @@
   "type": "commonjs",
   "dependencies": {
     "@a2a-js/sdk": "^0.3.12",
+    "@google/genai": "^1.47.0",
     "dotenv": "^17.3.1",
     "openai": "^4.100.0"
   }

@@ -6,12 +6,115 @@ const MODEL_DEFAULT = "nvidia/nemotron-3-super-120b-a12b:free";
 const MAX_POST_CHARS = 280;
 const MAX_COMMENT_CHARS = 400;
 
+function envFlag(v, fallback = false) {
+  if (v == null) return fallback;
+  const n = String(v).trim().toLowerCase();
+  if (["1", "true", "yes", "on"].includes(n)) return true;
+  if (["0", "false", "no", "off"].includes(n)) return false;
+  return fallback;
+}
+
+function coerceMessageText(content) {
+  if (typeof content === "string") return content;
+  if (Array.isArray(content)) {
+    return content
+      .map((part) => {
+        if (typeof part === "string") return part;
+        if (part && typeof part.text === "string") return part.text;
+        if (part && typeof part.content === "string") return part.content;
+        return "";
+      })
+      .filter(Boolean)
+      .join("\n")
+      .trim();
+  }
+  if (content && typeof content === "object") {
+    if (typeof content.text === "string") return content.text;
+    if (typeof content.content === "string") return content.content;
+  }
+  return "";
+}
+
+function sanitizeText(text) {
+  return String(text || "")
+    .trim()
+    .replace(/^```(?:json)?/i, "")
+    .replace(/```$/, "")
+    .trim();
+}
+
+function debugLlmResponse(kind, resp) {
+  if (!envFlag(process.env.DEBUG_LLM_REASONING, false)) return;
+  const choice = resp?.choices?.[0] || {};
+  const msg = choice?.message || {};
+  const reasoningDetails = Array.isArray(msg?.reasoning_details) ? msg.reasoning_details : [];
+  const details = {
+    event: `llm-${kind}-debug`,
+    model: resp?.model || null,
+    finishReason: choice?.finish_reason ?? null,
+    hasReasoningDetails: msg?.reasoning_details != null,
+    reasoningDetailsCount: reasoningDetails.length,
+    hasReasoning: msg?.reasoning != null,
+    contentType: Array.isArray(msg?.content) ? "array" : typeof msg?.content,
+    contentPreview: sanitizeText(coerceMessageText(msg?.content)).slice(0, 500),
+  };
+  console.log(JSON.stringify(details));
+}
+
+function buildReasoningContinuationMessages(systemPrompt, userPrompt, resp) {
+  const msg = resp?.choices?.[0]?.message || {};
+  const assistantContent = coerceMessageText(msg.content);
+  const assistantMessage = {
+    role: "assistant",
+    content: assistantContent,
+  };
+  if (msg.reasoning_details != null) {
+    assistantMessage.reasoning_details = msg.reasoning_details;
+  }
+
+  return [
+    { role: "system", content: systemPrompt },
+    { role: "user", content: userPrompt },
+    assistantMessage,
+    {
+      role: "user",
+      content:
+        "Continue from your prior reasoning and return only final JSON output now.",
+    },
+  ];
+}
+
+function getReasoningOptions() {
+  if (!envFlag(process.env.LLM_ENABLE_REASONING, false)) return {};
+  const max = Number(process.env.LLM_REASONING_MAX_TOKENS || 0);
+  if (Number.isFinite(max) && max > 0) {
+    return { reasoning: { enabled: true, max_tokens: Math.floor(max) } };
+  }
+  return { reasoning: { enabled: true } };
+}
+
+function readTokenBudget(name, fallback) {
+  const v = Number(process.env[name] || fallback);
+  if (!Number.isFinite(v) || v <= 0) return fallback;
+  return Math.floor(v);
+}
+
+function extractTextFromResponse(resp, key) {
+  const raw = sanitizeText(coerceMessageText(resp?.choices?.[0]?.message?.content));
+  const parsed = extractJson(raw);
+  return String(parsed?.[key] || raw).trim();
+}
+
 function getClient() {
   const apiKey = process.env.OPENROUTER_API_KEY;
   if (!apiKey) throw new Error("OPENROUTER_API_KEY not set");
+  const timeoutMsRaw = Number(process.env.LLM_HTTP_TIMEOUT_MS || 120000);
+  const timeout = Number.isFinite(timeoutMsRaw) && timeoutMsRaw > 0 ? timeoutMsRaw : 120000;
   return new OpenAI({
     apiKey,
     baseURL: "https://openrouter.ai/api/v1",
+    timeout,
+    maxRetries: 1,
     defaultHeaders: {
       "HTTP-Referer": "https://github.com/dannywalter/babylon-bot",
       "X-Title": "babylon-bot",
@@ -81,20 +184,34 @@ async function generatePostText(context, config = {}) {
   ].join("\n");
 
   const client = getClient();
-  const resp = await client.chat.completions.create({
+  const reasoningOptions = getReasoningOptions();
+  const postMaxTokens = readTokenBudget("LLM_MAX_POST_TOKENS", 1024);
+  const postRetryMaxTokens = readTokenBudget("LLM_MAX_RETRY_POST_TOKENS", 768);
+  let resp = await client.chat.completions.create({
     model,
     messages: [
       { role: "system", content: systemPrompt },
       { role: "user", content: userPrompt },
     ],
-    max_tokens: 350,
+    max_tokens: postMaxTokens,
     temperature: 0.85,
-    reasoning: { enabled: true },
+    ...reasoningOptions,
   });
 
-  const raw = resp.choices[0]?.message?.content || "";
-  const parsed = extractJson(raw);
-  const text = String(parsed?.post_text || "").trim();
+  debugLlmResponse("post", resp);
+  let text = extractTextFromResponse(resp, "post_text");
+  if (text.length < 20) {
+    const retryMessages = buildReasoningContinuationMessages(systemPrompt, userPrompt, resp);
+    resp = await client.chat.completions.create({
+      model,
+      messages: retryMessages,
+      max_tokens: postRetryMaxTokens,
+      temperature: 0.7,
+      ...reasoningOptions,
+    });
+    debugLlmResponse("post-retry", resp);
+    text = extractTextFromResponse(resp, "post_text");
+  }
   if (text.length < 20) throw new Error(`LLM post text too short: "${text}"`);
   return text.slice(0, MAX_POST_CHARS);
 }
@@ -120,20 +237,34 @@ async function generateCommentText(postContent, context, config = {}) {
   ].join("\n");
 
   const client = getClient();
-  const resp = await client.chat.completions.create({
+  const reasoningOptions = getReasoningOptions();
+  const commentMaxTokens = readTokenBudget("LLM_MAX_COMMENT_TOKENS", 768);
+  const commentRetryMaxTokens = readTokenBudget("LLM_MAX_RETRY_COMMENT_TOKENS", 512);
+  let resp = await client.chat.completions.create({
     model,
     messages: [
       { role: "system", content: systemPrompt },
       { role: "user", content: userPrompt },
     ],
-    max_tokens: 250,
+    max_tokens: commentMaxTokens,
     temperature: 0.8,
-    reasoning: { enabled: true },
+    ...reasoningOptions,
   });
 
-  const raw = resp.choices[0]?.message?.content || "";
-  const parsed = extractJson(raw);
-  const text = String(parsed?.comment_text || "").trim();
+  debugLlmResponse("comment", resp);
+  let text = extractTextFromResponse(resp, "comment_text");
+  if (text.length < 30) {
+    const retryMessages = buildReasoningContinuationMessages(systemPrompt, userPrompt, resp);
+    resp = await client.chat.completions.create({
+      model,
+      messages: retryMessages,
+      max_tokens: commentRetryMaxTokens,
+      temperature: 0.7,
+      ...reasoningOptions,
+    });
+    debugLlmResponse("comment-retry", resp);
+    text = extractTextFromResponse(resp, "comment_text");
+  }
   if (text.length < 30)
     throw new Error(`LLM comment text too short: "${text}"`);
   return text.slice(0, MAX_COMMENT_CHARS);
