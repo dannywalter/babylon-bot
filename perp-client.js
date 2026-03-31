@@ -10,21 +10,57 @@
 
 const DEFAULT_BASE_URL = process.env.BABYLON_BASE_URL ?? 'https://play.babylon.market';
 const DEFAULT_MCP_URL  = `${DEFAULT_BASE_URL}/mcp`;
+const DEFAULT_TIMEOUT_MS = Number(process.env.BABYLON_HTTP_TIMEOUT_MS) || 15_000;
+
+function sleep(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+async function fetchWithTimeout(url, options = {}, timeoutMs = DEFAULT_TIMEOUT_MS) {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), timeoutMs);
+
+  try {
+    return await fetch(url, { ...options, signal: controller.signal });
+  } catch (err) {
+    if (err?.name === 'AbortError') {
+      throw new Error(`Request timeout after ${timeoutMs}ms: ${url}`);
+    }
+    throw err;
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
+async function fetchWithRetry(url, options = {}, { retries = 0, timeoutMs = DEFAULT_TIMEOUT_MS } = {}) {
+  let attempt = 0;
+  while (true) {
+    try {
+      return await fetchWithTimeout(url, options, timeoutMs);
+    } catch (err) {
+      if (attempt >= retries) {
+        throw err;
+      }
+      attempt += 1;
+      await sleep(250 * attempt);
+    }
+  }
+}
 
 function getApiKey() {
   return process.env.BABYLON_API_KEY;
 }
 
 async function restGet(path, { apiKey = getApiKey(), baseUrl = DEFAULT_BASE_URL } = {}) {
-  const r = await fetch(`${baseUrl}${path}`, {
+  const r = await fetchWithRetry(`${baseUrl}${path}`, {
     headers: { 'X-Babylon-Api-Key': apiKey },
-  });
+  }, { retries: 2 });
   if (!r.ok) throw new Error(`REST GET ${r.status} ${r.statusText} — ${path}`);
   return r.json();
 }
 
 async function restPost(path, body, { apiKey = getApiKey(), baseUrl = DEFAULT_BASE_URL } = {}) {
-  const r = await fetch(`${baseUrl}${path}`, {
+  const r = await fetchWithRetry(`${baseUrl}${path}`, {
     method: 'POST',
     headers: { 'X-Babylon-Api-Key': apiKey, 'Content-Type': 'application/json' },
     body: JSON.stringify(body),
@@ -37,7 +73,7 @@ async function restPost(path, body, { apiKey = getApiKey(), baseUrl = DEFAULT_BA
 }
 
 async function mcpCall(toolName, toolArgs = {}, { apiKey = getApiKey(), mcpUrl = DEFAULT_MCP_URL } = {}) {
-  const r = await fetch(mcpUrl, {
+  const r = await fetchWithRetry(mcpUrl, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', 'X-Babylon-Api-Key': apiKey },
     body: JSON.stringify({
@@ -72,7 +108,7 @@ async function a2aAgentCall(operation, params = {}, contextId, agentId, { apiKey
   };
   if (contextId != null) message.contextId = contextId;
 
-  const r = await fetch(`${baseUrl}/api/agents/${agentId}/a2a`, {
+  const r = await fetchWithRetry(`${baseUrl}/api/agents/${agentId}/a2a`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', 'X-Babylon-Api-Key': apiKey },
     body: JSON.stringify({ jsonrpc: '2.0', method: 'message/send', params: { message }, id }),
@@ -91,11 +127,11 @@ async function notifyDiscord(message, webhookUrl = process.env.DISCORD_WEBHOOK_U
     return;
   }
   try {
-    const r = await fetch(webhookUrl, {
+    const r = await fetchWithRetry(webhookUrl, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ content: message }),
-    });
+    }, { retries: 1, timeoutMs: 10_000 });
     if (!r.ok) {
       console.warn(`Discord notification failed: HTTP ${r.status} — ${await r.text()}`);
     } else {

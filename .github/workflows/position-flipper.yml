@@ -19,7 +19,7 @@ jobs:
   check-and-flip:
     if: ${{ github.event.inputs.run_mode == 'check-and-flip' || github.event.inputs.run_mode == 'both' }}
     runs-on: ubuntu-latest
-    timeout-minutes: 2
+    timeout-minutes: 5
     env:
       FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
 
@@ -32,6 +32,15 @@ jobs:
         with:
           node-version: '24'
           cache: 'npm'
+
+      - name: Validate required secrets
+        env:
+          BABYLON_API_KEY: ${{ secrets.BABYLON_API_KEY }}
+          BABYLON_USER_ID: ${{ secrets.BABYLON_USER_ID }}
+        run: |
+          set -euo pipefail
+          [[ -n "${BABYLON_API_KEY:-}" ]] || { echo "Missing required secret: BABYLON_API_KEY"; exit 1; }
+          [[ -n "${BABYLON_USER_ID:-}" ]] || { echo "Missing required secret: BABYLON_USER_ID"; exit 1; }
 
       - name: Install dependencies
         run: npm ci
@@ -113,7 +122,7 @@ jobs:
   agent-flip:
     if: ${{ github.event.inputs.run_mode == 'agent-flip' || github.event.inputs.run_mode == 'both' }}
     runs-on: ubuntu-latest
-    timeout-minutes: 2
+    timeout-minutes: 5
     env:
       FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
 
@@ -126,6 +135,15 @@ jobs:
         with:
           node-version: '24'
           cache: 'npm'
+
+      - name: Validate required secrets
+        env:
+          BABYLON_AGENT_ID: ${{ secrets.BABYLON_AGENT_ID }}
+          BABYLON_AGENT_API_KEY: ${{ secrets.BABYLON_AGENT_API_KEY }}
+        run: |
+          set -euo pipefail
+          [[ -n "${BABYLON_AGENT_ID:-}" ]] || { echo "Missing required secret: BABYLON_AGENT_ID"; exit 1; }
+          [[ -n "${BABYLON_AGENT_API_KEY:-}" ]] || { echo "Missing required secret: BABYLON_AGENT_API_KEY"; exit 1; }
 
       - name: Install dependencies
         run: npm ci

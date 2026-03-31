@@ -38,7 +38,7 @@ const { restGet, mcpCall, a2aAgentCall, notifyDiscord } = require('./perp-client
 const { parseNumber, parseCsv } = require('./trading-core');
 
 const API_KEY  = process.env.BABYLON_API_KEY;
-const USER_ID  = process.env.BABYLON_USER_ID || 'did:privy:cmi9b6ko8011djv0czb0ozbvm';
+const USER_ID  = process.env.BABYLON_USER_ID;
 const POLL_MS  = parseNumber(process.env.POLL_INTERVAL_MS, 30_000);
 const args     = process.argv.slice(2);
 const WATCH    = args.includes('--watch');
@@ -54,6 +54,8 @@ const DIRECTOR_TRADE_SIZE = parseNumber(process.env.DIRECTOR_TRADE_SIZE, 0);
 
 const TICKER_DEFAULTS = {
   OPENAGI: { flipToShortAbove: 1750, flipToLongBelow: 200 },
+  TSLAI:   { flipToShortAbove: 970,  flipToLongBelow: 120 },
+  METAI:   { flipToShortAbove: 1700, flipToLongBelow: 350 },
   SPCX:    { flipToShortAbove: 600,  flipToLongBelow: 100 },
 };
 
@@ -140,6 +142,24 @@ function getDirectorTradeSizeForKey(directorKey) {
   );
 }
 
+function validateThresholdPair(label, { flipToShortAbove, flipToLongBelow }) {
+  if (!Number.isFinite(flipToShortAbove) || !Number.isFinite(flipToLongBelow)) {
+    throw new Error(`${label} thresholds must be finite numbers.`);
+  }
+  if (flipToShortAbove <= flipToLongBelow) {
+    throw new Error(`${label} invalid thresholds: FLIP_TO_SHORT_ABOVE (${flipToShortAbove}) must be > FLIP_TO_LONG_BELOW (${flipToLongBelow}).`);
+  }
+}
+
+function validateConfiguration() {
+  for (const ticker of TICKERS) {
+    validateThresholdPair(ticker, getThresholds(ticker));
+  }
+  for (const directorKey of DIRECTOR_KEYS) {
+    validateThresholdPair(`${directorKey} (director)`, getDirectorThresholdsForKey(directorKey));
+  }
+}
+
 function fmtUsd(value) {
   const n = Number(value);
   if (!Number.isFinite(n)) return '$0.00';
@@ -190,6 +210,10 @@ async function getUserPosition(ticker) {
 async function checkFlip({ ticker, label, thresholds, getPos, closePos, openPos, recoverMissingPosition = false }) {
   const { flipToShortAbove, flipToLongBelow } = thresholds;
   const [price, position] = await Promise.all([getPrice(ticker), getPos()]);
+
+  if (!Number.isFinite(price) || price <= 0) {
+    throw new Error(`[${label}] ${ticker} returned invalid price: ${price}`);
+  }
 
   const side    = position?.side ?? 'none';
   const pnl     = position ? fmtUsd(position.unrealizedPnL) : 'n/a';
@@ -399,7 +423,7 @@ async function checkDirectorTicker(directorKey) {
         console.warn(`  [${agentLabel}] Close (ctx=${ctxId}) failed: ${e.message}`);
       }
     }
-    console.warn(`  [${agentLabel}] All close attempts failed — proceeding to open anyway.`);
+    throw new Error(`[${agentLabel}] All close attempts failed; refusing to open opposite side.`);
   }
 
   await checkFlip({
@@ -435,6 +459,9 @@ async function checkDirectorTicker(directorKey) {
         const marketLimitMatch = e.message.match(/market limit \(([\d,]+(?:\.\d+)?)\)/);
         if (marketLimitMatch) {
           const marketCap = Math.floor(parseFloat(marketLimitMatch[1].replace(/,/g, '')));
+          if (!Number.isFinite(marketCap) || marketCap <= 0) {
+            throw new Error(`[${agentLabel}] Parsed invalid market cap from error: ${marketLimitMatch[1]}`);
+          }
           console.warn(`  [${agentLabel}] Market cap hit at $${marketCap.toLocaleString()}, retrying…`);
           const result = await a2aAgentCall('markets.open_position', { ticker, side, amount: marketCap, leverage: 1 }, agentId, agentId);
           console.log(`  [${agentLabel}] Done (capped):`, JSON.stringify(result));
@@ -454,24 +481,48 @@ async function main() {
     process.exit(1);
   }
 
+  if (!USER_ID) {
+    console.error('ERROR: BABYLON_USER_ID is not set in .env');
+    process.exit(1);
+  }
+
+  try {
+    validateConfiguration();
+  } catch (e) {
+    console.error(`ERROR: ${e.message}`);
+    process.exit(1);
+  }
+
   if (DRY_RUN) console.log('[DRY RUN MODE — no trades will execute]\n');
   if (TICKERS.length)          console.log(`Monitoring tickers: ${TICKERS.join(', ')}`);
   if (DIRECTOR_KEYS.length) console.log(`Director tickers:   ${DIRECTOR_KEYS.join(', ')} (agent-only)`);
   console.log();
 
+  let inFlight = false;
   async function checkAll() {
-    for (const ticker of TICKERS) {
-      try { await checkUserTicker(ticker); } catch (e) {
-        console.error(`[ERROR] ${ticker}:`, e.message);
-        if (e.message.includes('401') || e.message.includes('403')) {
-          console.error('  → API key rejected. Check BABYLON_API_KEY in .env.');
+    if (inFlight) {
+      console.warn('Previous check cycle is still running; skipping this interval tick.');
+      return;
+    }
+    inFlight = true;
+
+    try {
+      for (const ticker of TICKERS) {
+        try { await checkUserTicker(ticker); } catch (e) {
+          console.error(`[ERROR] ${ticker}:`, e.message);
+          if (e.message.includes('401') || e.message.includes('403')) {
+            console.error('  → API key rejected. Check BABYLON_API_KEY in .env.');
+          }
         }
       }
-    }
-    for (const directorKey of DIRECTOR_KEYS) {
-      try { await checkDirectorTicker(directorKey); } catch (e) {
-        console.error(`[ERROR] [Director] ${directorKey}:`, e.message);
+
+      for (const directorKey of DIRECTOR_KEYS) {
+        try { await checkDirectorTicker(directorKey); } catch (e) {
+          console.error(`[ERROR] [Director] ${directorKey}:`, e.message);
+        }
       }
+    } finally {
+      inFlight = false;
     }
   }
 
