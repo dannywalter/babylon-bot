@@ -45,8 +45,8 @@ Director-only tickers:
 - `npm run flip:watch`: local poll mode (`--watch`)
 - `npm run flip:dry`: local dry-run watch mode
 - `npm run flip:openagi`: watch OPENAGI only
-- `npm run flip:spcx`: watch SPCX only
-- `npm run flip:spcx:dry`: dry-run SPCX watch
+- `npm run flip:aiphb`: watch AIPHB only
+- `npm run flip:aiphb:dry`: dry-run AIPHB watch
 - `npm run positions`: show perp positions
 - `npm run yolobot`: run yolobot strategy loop manually
 - `npm run yolo:manual`: alias for the same manual strategy loop

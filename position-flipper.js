@@ -16,7 +16,7 @@
  *
  * Optional .env vars:
  *   BABYLON_BASE_URL                override base URL (default https://play.babylon.market)
- *   TICKERS                         comma-separated list, default "OPENAGI,SPCX"
+ *   TICKERS                         comma-separated list, default "OPENAGI,AIPHB"
  *   {TICKER}_FLIP_TO_SHORT_ABOVE    e.g. OPENAGI_FLIP_TO_SHORT_ABOVE=1750
  *   {TICKER}_FLIP_TO_LONG_BELOW     e.g. OPENAGI_FLIP_TO_LONG_BELOW=200
  *   POLL_INTERVAL_MS                default 30000
@@ -44,7 +44,7 @@ const args     = process.argv.slice(2);
 const WATCH    = args.includes('--watch');
 const DRY_RUN  = args.includes('--dry-run') || process.env.DRY_RUN === 'true';
 
-const TICKERS          = parseCsv(process.env.TICKERS  || 'OPENAGI,SPCX').map(t => t.toUpperCase());
+const TICKERS          = parseCsv(process.env.TICKERS  || 'OPENAGI,AIPHB').map(t => t.toUpperCase());
 const DIRECTOR_KEYS = parseCsv(process.env.DIRECTOR_TICKERS).map(t => t.toUpperCase());
 
 const DIRECTOR_AGENT_ID   = process.env.DIRECTOR_AGENT_ID;
