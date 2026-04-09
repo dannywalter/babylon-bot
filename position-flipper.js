@@ -56,6 +56,7 @@ const TICKER_DEFAULTS = {
   OPENAGI: { flipToShortAbove: 1750, flipToLongBelow: 200 },
   TSLAI:   { flipToShortAbove: 970,  flipToLongBelow: 120 },
   METAI:   { flipToShortAbove: 1700, flipToLongBelow: 350 },
+  AIPHB:   { flipToShortAbove: 600,  flipToLongBelow: 130 },
   SPCX:    { flipToShortAbove: 600,  flipToLongBelow: 100 },
 };
 
