@@ -465,6 +465,11 @@ async function checkDirectorTicker(directorKey) {
           console.warn(`  [${agentLabel}] Market cap hit at $${marketCap.toLocaleString()}, retrying…`);
           const result = await a2aAgentCall('markets.open_position', { ticker, side, amount: marketCap, leverage: 1 }, agentId, agentId);
           console.log(`  [${agentLabel}] Done (capped):`, JSON.stringify(result));
+        } else if (/order size below minimum/i.test(e.message)) {
+          // Market is closed or delisted — minimum order size is now unreachable.
+          // Log and skip silently; do not throw so Discord is not spammed on every run.
+          console.warn(`  [${agentLabel}] ${ticker} market is not accepting new positions (${e.message}); skipping recovery.`);
+          return;
         } else {
           throw e;
         }

@@ -63,6 +63,7 @@ Common optional:
 - `TICKERS`
 - `POLL_INTERVAL_MS`
 - `DRY_RUN`
+- `BABYLON_A2A_BASE_URL` (defaults to `BABYLON_BASE_URL`, with internal fallback to `https://babylon.market`)
 - `DISCORD_WEBHOOK_URL`
 
 Director optional:

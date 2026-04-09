@@ -116,6 +116,7 @@ jobs:
           OPENAGI__UPSILON_GRID_DIRECTOR_FLIP_TO_SHORT_ABOVE: ${{ vars.OPENAGI__UPSILON_GRID_DIRECTOR_FLIP_TO_SHORT_ABOVE || '1700' }}
           OPENAGI__UPSILON_GRID_DIRECTOR_TRADE_SIZE: ${{ vars.OPENAGI__UPSILON_GRID_DIRECTOR_TRADE_SIZE || vars.OPENAGI_DIRECTOR_TRADE_SIZE || secrets.DIRECTOR_TRADE_SIZE }}
           DRY_RUN: ${{ vars.DRY_RUN || 'false' }}
+          BABYLON_A2A_BASE_URL: ${{ vars.BABYLON_A2A_BASE_URL || vars.BABYLON_BASE_URL || 'https://play.babylon.market' }}
           DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
         run: node position-flipper.js
 
@@ -159,5 +160,6 @@ jobs:
           TSLAI_AGENT_FLIP_TO_LONG_BELOW: ${{ vars.TSLAI_AGENT_FLIP_TO_LONG_BELOW || '120' }}
           POLL_INTERVAL_MS: ${{ vars.POLL_INTERVAL_MS || '30000' }}
           DRY_RUN: ${{ vars.AGENT_DRY_RUN || vars.DRY_RUN || 'false' }}
+          BABYLON_A2A_BASE_URL: ${{ vars.BABYLON_A2A_BASE_URL || vars.BABYLON_BASE_URL || 'https://play.babylon.market' }}
           DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
         run: node agent-flipper.js
